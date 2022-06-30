@@ -136,3 +136,4 @@ dmypy.json
 .json
 .yaml
 assets/
+wandb/

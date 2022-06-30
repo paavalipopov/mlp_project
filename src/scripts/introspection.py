@@ -1,21 +1,14 @@
 import os
-import matplotlib.pyplot as plt
-import seaborn as sns
 
+from captum.attr import IntegratedGradients, NoiseTunnel, Saliency, visualization as viz
+import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
+import seaborn as sns
 import torch
 
-from captum.attr import visualization as viz
-from captum.attr import (
-    Saliency,
-    IntegratedGradients,
-    NoiseTunnel,
-)
-
-from src.settings import LOGS_ROOT, ASSETS_ROOT, UTCNOW
-from src.data_load import load_ABIDE1, load_OASIS, load_FBIRN
-from src.models import LSTM, Transformer, MLP, AttentionMLP
+from src.settings import ASSETS_ROOT, LOGS_ROOT, UTCNOW
+from src.ts_data import load_ABIDE1, load_COBRE, load_FBIRN, load_OASIS
+from src.ts_model import LSTM, MLP, Transformer
 
 sns.set_theme(style="whitegrid", font_scale=2, rc={"figure.figsize": (18, 9)})
 
@@ -192,6 +185,8 @@ class Introspection:
             features, _ = load_ABIDE1()
         elif self.dataset_name == "fbirn":
             features, _ = load_FBIRN()
+        elif self.dataset_name == "cobre":
+            features, _ = load_COBRE()
         else:
             print(f"Dataset '{self.dataset_name}' is undefined")
             return
@@ -210,71 +205,6 @@ class Introspection:
         for i, feature in enumerate(features):
             self.introspection(i, feature, introspection_methods)
 
-
-# if __name__ == "__main__":
-#     dataset_name = "oasis"
-#     model_name = "lstm"
-#     model_path = LOGS_ROOT.joinpath("220615.035350-lstm-oasis/k_0/0000/model.best.pth")
-#     image_path = ASSETS_ROOT.joinpath(f"images/{UTCNOW}-{model_name}-{dataset_name}")
-
-#     model = LSTM(
-#         input_size=53,
-#         input_len=156,
-#         hidden_size=52,
-#         num_layers=3,
-#         batch_first=True,
-#         bidirectional=False,
-#         fc_dropout=0.2626756675371412,
-#     )
-#     checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
-#     model.load_state_dict(checkpoint)
-#     model = model.eval()
-
-#     introspection = Introspection(
-#         dataset_name=dataset_name,
-#         model_name=model_name,
-#         image_path=image_path,
-#         model_path=model_path,
-#     )
-#     introspection.initialize_model(model=model)
-
-#     introspection_methods = set(["saliency", "ig", "ignt"])
-#     introspection.run_introspection(introspection_methods)
-
-# if __name__ == "__main__":
-#     dataset_name = "fbirn"
-#     model_name = "mlp"
-#     model_path = LOGS_ROOT.joinpath(
-#         "220628.041515-ts-mlp-oasis-qFalse/0000/model.best.pth"
-#     )
-#     image_path = ASSETS_ROOT.joinpath(f"images/{UTCNOW}-{model_name}-{dataset_name}")
-
-#     hidden_size = 142
-#     num_layers = 2
-#     dropout = 0.15847198018446662
-#     lr = 0.0002222585782420201
-
-#     model = AttentionMLP(
-#         input_size=53,  # PRIOR
-#         output_size=2,  # PRIOR
-#         hidden_size=hidden_size,
-#         num_layers=num_layers,
-#         dropout=dropout,
-#     )
-#     checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
-#     model.load_state_dict(checkpoint)
-#     model = model.eval()
-
-#     introspection = Introspection(
-#         dataset_name=dataset_name,
-#         model_name=model_name,
-#         image_path=image_path,
-#         model_path=model_path,
-#     )
-#     introspection.initialize_model(model=model)
-
-#     introspection_methods = set(["saliency", "ig", "ignt"])
-#     introspection.run_introspection(introspection_methods)
 
 if __name__ == "__main__":
     dataset_name = "fbirn"
@@ -308,5 +238,5 @@ if __name__ == "__main__":
     )
     introspection.initialize_model(model=model)
 
-    introspection_methods = set(["saliency", "ig", "ignt"])
+    introspection_methods = {"saliency", "ig", "ignt"}
     introspection.run_introspection(introspection_methods)

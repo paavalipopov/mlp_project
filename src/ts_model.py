@@ -1,13 +1,7 @@
 # pylint: disable=C0115,C0103,C0116,R1725,R0913
-"""
-Models for experiments
-"""
+"""Models for experiments"""
 import torch
 from torch import nn
-
-
-import torch
-import torch.nn as nn
 
 
 class ResidualBlock(nn.Module):

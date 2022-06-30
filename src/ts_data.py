@@ -1,7 +1,5 @@
 # pylint: disable=C0103,C0115,C0116,R0913,E1121,C0301
-"""
-Functions for extracting dataset features and labels
-"""
+"""Functions for extracting dataset features and labels"""
 import h5py
 import numpy as np
 import pandas as pd
@@ -19,9 +17,12 @@ def load_ABIDE1(
     Return ABIDE1 data
 
     Input:
-    dataset_path: str = DATA_ROOT.joinpath("abide/ABIDE1_AllData.h5") - path to the dataset
-    indices_path: str = DATA_ROOT.joinpath("abide/correct_indices_GSP.csv") - path to correct indices/components
-    labels_path: str = DATA_ROOT.joinpath("abide/labels_ABIDE1.csv") - path to labels
+    dataset_path: str = DATA_ROOT.joinpath("abide/ABIDE1_AllData.h5")
+    - path to the dataset
+    indices_path: str = DATA_ROOT.joinpath("abide/correct_indices_GSP.csv")
+    - path to correct indices/components
+    labels_path: str = DATA_ROOT.joinpath("abide/labels_ABIDE1.csv")
+    - path to labels
 
     Output:
     features, labels
@@ -66,9 +67,12 @@ def load_COBRE(
     Return COBRE data
 
     Input:
-    dataset_path: str = DATA_ROOT.joinpath("cobre/COBRE_AllData.h5") - path to the dataset
-    indices_path: str = DATA_ROOT.joinpath("cobre/correct_indices_GSP.csv") - path to correct indices/components
-    labels_path: str = DATA_ROOT.joinpath("cobre/labels_COBRE.csv") - path to labels
+    dataset_path: str = DATA_ROOT.joinpath("cobre/COBRE_AllData.h5")
+    - path to the dataset
+    indices_path: str = DATA_ROOT.joinpath("cobre/correct_indices_GSP.csv")
+    - path to correct indices/components
+    labels_path: str = DATA_ROOT.joinpath("cobre/labels_COBRE.csv")
+    - path to labels
 
     Output:
     features, labels
@@ -113,9 +117,12 @@ def load_FBIRN(
     Return FBIRN data
 
     Input:
-    dataset_path: str = DATA_ROOT.joinpath("fbirn/FBIRN_AllData.h5") - path to the dataset
-    indices_path: str = DATA_ROOT.joinpath("fbirn/correct_indices_GSP.csv") - path to correct indices/components
-    labels_path: str = DATA_ROOT.joinpath("fbirn/labels_FBIRN_new.csv") - path to labels
+    dataset_path: str = DATA_ROOT.joinpath("fbirn/FBIRN_AllData.h5")
+    - path to the dataset
+    indices_path: str = DATA_ROOT.joinpath("fbirn/correct_indices_GSP.csv")
+    - path to correct indices/components
+    labels_path: str = DATA_ROOT.joinpath("fbirn/labels_FBIRN_new.csv")
+    - path to labels
 
     Output:
     features, labels
@@ -163,12 +170,18 @@ def load_OASIS(
     Return OASIS data
 
     Input:
-    only_first_sessions: bool = True - load only first sessions of each subject
-    only_two_classes: bool = True - filter all classes except for 0 and 1 (HC and AZ)
-    dataset_path: str = DATA_ROOT.joinpath("oasis/OASIS3_AllData_allsessions.npz") - path to the dataset
-    indices_path: str = DATA_ROOT.joinpath("oasis/correct_indices_GSP.csv") - path to correct indices/components
-    labels_path: str = DATA_ROOT.joinpath("oasis/labels_OASIS_6_classes.csv") - path to labels
-    sessions_path: str = DATA_ROOT.joinpath("oasis/oasis_first_sessions_index.csv") - path to indices of the first sessions
+    only_first_sessions: bool = True
+    - load only first sessions of each subject
+    only_two_classes: bool = True
+    - filter all classes except for 0 and 1 (HC and AZ)
+    dataset_path: str = DATA_ROOT.joinpath("oasis/OASIS3_AllData_allsessions.npz")
+    - path to the dataset
+    indices_path: str = DATA_ROOT.joinpath("oasis/correct_indices_GSP.csv")
+    - path to correct indices/components
+    labels_path: str = DATA_ROOT.joinpath("oasis/labels_OASIS_6_classes.csv")
+    - path to labels
+    sessions_path: str = DATA_ROOT.joinpath("oasis/oasis_first_sessions_index.csv")
+    - path to indices of the first sessions
 
     Output:
     features, labels

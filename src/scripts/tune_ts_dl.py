@@ -1,31 +1,28 @@
 # pylint: disable=W0201,W0223,C0103,C0115,C0116,R0902,E1101,R0914
-"""
-Script for tuning different models on different datasets
-"""
+"""Script for tuning different models on different datasets"""
 import argparse
 import json
 
-from animus import EarlyStoppingCallback, IExperiment
-from animus.torch.callbacks import TorchCheckpointerCallback
 from apto.utils.misc import boolean_flag
 from apto.utils.report import get_classification_report
 import numpy as np
 import optuna
-from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 import torch
-from torch import nn
-from torch import optim
+from torch import nn, optim
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
+from animus import EarlyStoppingCallback, IExperiment
+from animus.torch.callbacks import TorchCheckpointerCallback
 import wandb
 
 from src.settings import LOGS_ROOT, UTCNOW
 from src.ts_data import (
-    load_OASIS,
-    load_FBIRN,
     load_ABIDE1,
     load_COBRE,
+    load_FBIRN,
+    load_OASIS,
     TSQuantileTransformer,
 )
 from src.ts_model import LSTM, MLP, Transformer
