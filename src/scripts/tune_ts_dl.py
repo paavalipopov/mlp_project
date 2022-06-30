@@ -1,17 +1,17 @@
 # pylint: disable=W0201,W0223,C0103,C0115,C0116,R0902,E1101,R0914
 """
-Experiment on OASIS data with LSTM model
+Script for tuning different models on different datasets
 """
 import argparse
 import json
 
 from animus import EarlyStoppingCallback, IExperiment
 from animus.torch.callbacks import TorchCheckpointerCallback
+from apto.utils.misc import boolean_flag
 from apto.utils.report import get_classification_report
 import numpy as np
 import optuna
-from sklearn.model_selection import train_test_split
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import train_test_split, StratifiedKFold
 import torch
 from torch import nn
 from torch import optim
@@ -21,23 +21,49 @@ from tqdm.auto import tqdm
 import wandb
 
 from src.settings import LOGS_ROOT, UTCNOW
-from src.data_load import load_OASIS
-from src.models import LSTM
+from src.ts_data import (
+    load_OASIS,
+    load_FBIRN,
+    load_ABIDE1,
+    load_COBRE,
+    TSQuantileTransformer,
+)
+from src.ts_model import LSTM, MLP, Transformer
 
 
 class Experiment(IExperiment):
-    def __init__(self, max_epochs: int, logdir: str, project_name: str) -> None:
+    def __init__(
+        self,
+        model: str,
+        dataset: str,
+        quantile: bool,
+        n_splits: int,
+        max_epochs: int,
+        logdir: str,
+    ) -> None:
         super().__init__()
+        assert not quantile, "Not implemented yet"
+        self._model = model
+        self._dataset = dataset
+        self._quantile: bool = quantile
+        self.n_splits = n_splits
         self._trial: optuna.Trial = None
         self.max_epochs = max_epochs
         self.logdir = logdir
-        self.project_name = project_name
 
-    def initialize_data(self) -> None:
-        features, labels = load_OASIS()
+    def initialize_dataset(self) -> None:
+        if self._dataset == "oasis":
+            features, labels = load_OASIS()
+        elif self._dataset == "abide":
+            features, labels = load_ABIDE1()
+        elif self._dataset == "fbirn":
+            features, labels = load_FBIRN()
+        elif self._dataset == "cobre":
+            features, labels = load_COBRE()
+
         self.data_shape = features.shape
 
-        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
         skf.get_n_splits(features, labels)
 
         train_index, test_index = list(skf.split(features, labels))[self.k]
@@ -48,14 +74,14 @@ class Experiment(IExperiment):
         X_train, X_val, y_train, y_val = train_test_split(
             X_train,
             y_train,
-            test_size=165,
+            test_size=self.data_shape[0] // self.n_splits,
             random_state=42 + self._trial.number,
             stratify=y_train,
         )
 
         X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
         X_val = np.swapaxes(X_val, 1, 2)  # [n_samples; seq_len; n_features]
-        X_test = np.swapaxes(X_test, 1, 2)
+        X_test = np.swapaxes(X_test, 1, 2)  # [n_samples; seq_len; n_features]
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
@@ -71,18 +97,22 @@ class Experiment(IExperiment):
         )
 
     def on_experiment_start(self, exp: "IExperiment"):
-        # init wandb logger
-        self.wandb_logger: wandb.run = wandb.init(
-            project=self.project_name,
-            name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
-        )
-
         super().on_experiment_start(exp)
 
-        self.initialize_data()
+        # init data
+        self.initialize_dataset()
+
+        # init wandb logger
+        self.wandb_logger: wandb.run = wandb.init(
+            project=f"tune-{self._model}-{self._dataset}",
+            name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
+        )
+        # config dict for wandb
+        wandb_config = {}
 
         # setup experiment
         self.num_epochs = self._trial.suggest_int("exp.num_epochs", 20, self.max_epochs)
+
         # setup data
         self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
         self.datasets = {
@@ -93,30 +123,85 @@ class Experiment(IExperiment):
                 self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
             ),
         }
-        # setup model
-        hidden_size = self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True)
-        num_layers = self._trial.suggest_int("lstm.num_layers", 1, 4)
-        bidirectional = self._trial.suggest_categorical(
-            "lstm.bidirectional", [True, False]
-        )
-        fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.8)
-        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
 
-        self.model = LSTM(
-            input_size=self.data_shape[1],  # 53
-            input_len=self.data_shape[2],  # 156
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            batch_first=True,
-            bidirectional=bidirectional,
-            fc_dropout=fc_dropout,
-        )
+        # setup model
+        if self._model == "mlp":
+            hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
+            num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
+            dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
+
+            self.model = MLP(
+                input_size=self.data_shape[1],  # PRIOR
+                output_size=2,  # PRIOR
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                dropout=dropout,
+            )
+            wandb_config = {
+                "hidden_size": hidden_size,
+                "num_layers": num_layers,
+                "dropout": dropout,
+            }
+
+        elif self._model == "lstm":
+            hidden_size = self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True)
+            num_layers = self._trial.suggest_int("lstm.num_layers", 1, 4)
+            bidirectional = self._trial.suggest_categorical(
+                "lstm.bidirectional", [True, False]
+            )
+            fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.9)
+
+            self.model = LSTM(
+                input_size=self.data_shape[1],  # PRIOR
+                output_size=2,  # PRIOR
+                hidden_size=hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                bidirectional=bidirectional,
+                fc_dropout=fc_dropout,
+            )
+            wandb_config = {
+                "hidden_size": hidden_size,
+                "num_layers": num_layers,
+                "bidirectional": bidirectional,
+                "fc_dropout": fc_dropout,
+            }
+
+        elif self._model == "transformer":
+            hidden_size = self._trial.suggest_int(
+                "transformer.hidden_size", 4, 128, log=True
+            )
+            num_heads = self._trial.suggest_int("transformer.num_heads", 1, 4)
+            num_layers = self._trial.suggest_int("transformer.num_layers", 1, 4)
+            fc_dropout = self._trial.suggest_uniform("transformer.fc_dropout", 0.1, 0.9)
+
+            self.model = Transformer(
+                input_size=self.data_shape[1],  # PRIOR
+                output_size=2,  # PRIOR
+                hidden_size=hidden_size * num_heads,
+                num_layers=num_layers,
+                num_heads=num_heads,
+                fc_dropout=fc_dropout,
+            )
+            wandb_config = {
+                "hidden_size": hidden_size,
+                "num_heads": num_heads,
+                "num_layers": num_layers,
+                "fc_dropout": fc_dropout,
+            }
+
+        else:
+            raise NotImplementedError()
 
         self.criterion = nn.CrossEntropyLoss()
+
+        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
         )
+        wandb_config["lr"] = lr
+
         # setup callbacks
         self.callbacks = {
             "early-stop": EarlyStoppingCallback(
@@ -128,24 +213,14 @@ class Experiment(IExperiment):
             ),
             "checkpointer": TorchCheckpointerCallback(
                 exp_attr="model",
-                logdir=f"{self.logdir}/k_{self.k}/{self._trial.number:04d}",
+                logdir=f"{self.logdir}k_{self.k}/{self._trial.number:04d}",
                 dataset_key="valid",
                 metric_key="loss",
                 minimize=True,
             ),
         }
 
-        self.wandb_logger.config.update(
-            {
-                "num_epochs": self.num_epochs,
-                "batch_size": self.batch_size,
-                "hidden_size": hidden_size,
-                "num_layers": num_layers,
-                "bidirectional": bidirectional,
-                "fc_dropout": fc_dropout,
-                "lr": lr,
-            }
-        )
+        self.wandb_logger.config.update(wandb_config)
 
     def run_dataset(self) -> None:
         all_scores, all_targets = [], []
@@ -258,11 +333,10 @@ class Experiment(IExperiment):
     def _objective(self, trial) -> float:
         self._trial = trial
         self.run()
-
         return self._score
 
     def tune(self, n_trials: int):
-        for k in range(5):
+        for k in range(self.n_splits):
             self.k = k
             self.study = optuna.create_study(direction="maximize")
             self.study.optimize(self._objective, n_trials=n_trials, n_jobs=1)
@@ -277,13 +351,26 @@ if __name__ == "__main__":
     warnings.filterwarnings("ignore")
 
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--model",
+        type=str,
+        choices=["mlp", "attention_mlp", "lstm", "transformer"],
+        required=True,
+    )
+    parser.add_argument(
+        "--ds", type=str, choices=["oasis", "abide", "fbirn", "cobre"], required=True
+    )
+    boolean_flag(parser, "quantile", default=False)
     parser.add_argument("--max-epochs", type=int, default=20)
     parser.add_argument("--num-trials", type=int, default=1)
+    parser.add_argument("--num-splits", type=int, default=5)
     args = parser.parse_args()
 
-    project_name = "tune-lstm-oasis"
     Experiment(
+        model=args.model,
+        dataset=args.ds,
+        quantile=args.quantile,
+        n_splits=args.num_splits,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-{project_name}/",
-        project_name=project_name,
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-tune-{args.model}-{args.ds}/",
     ).tune(n_trials=args.num_trials)

@@ -1,10 +1,11 @@
-#pylint: disable=C0103,C0115,C0116,R0913,E1121,C0301
+# pylint: disable=C0103,C0115,C0116,R0913,E1121,C0301
 """
 Functions for extracting dataset features and labels
 """
 import h5py
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import QuantileTransformer
 
 from src.settings import DATA_ROOT
 
@@ -46,6 +47,55 @@ def load_ABIDE1(
     idx = indices[0].values - 1
     # filter the data: leave only correct components
     data = data[:, idx, :]
+    # print(data.shape)
+    # 53 - components - data.shape[1]
+
+    # get labels
+    labels = pd.read_csv(labels_path, header=None)
+    labels = labels.values.flatten().astype("int") - 1
+
+    return data, labels
+
+
+def load_COBRE(
+    dataset_path: str = DATA_ROOT.joinpath("cobre/COBRE_AllData.h5"),
+    indices_path: str = DATA_ROOT.joinpath("cobre/correct_indices_GSP.csv"),
+    labels_path: str = DATA_ROOT.joinpath("cobre/labels_COBRE.csv"),
+):
+    """
+    Return COBRE data
+
+    Input:
+    dataset_path: str = DATA_ROOT.joinpath("cobre/COBRE_AllData.h5") - path to the dataset
+    indices_path: str = DATA_ROOT.joinpath("cobre/correct_indices_GSP.csv") - path to correct indices/components
+    labels_path: str = DATA_ROOT.joinpath("cobre/labels_COBRE.csv") - path to labels
+
+    Output:
+    features, labels
+    """
+
+    # get data
+    hf = h5py.File(dataset_path, "r")
+    data = hf.get("COBRE_dataset")
+    data = np.array(data)
+    # print(data.shape)
+    # >>> (157, 14000)
+
+    # reshape data
+    num_subjects = data.shape[0]
+    num_components = 100
+    data = data.reshape(num_subjects, num_components, -1)
+    # 157 - sessions - data.shape[0]
+    # 100 - components - data.shape[1]
+    # 140 - time points - data.shape[2]
+
+    # get correct indices/components
+    indices = pd.read_csv(indices_path, header=None)
+    idx = indices[0].values - 1
+    # filter the data: leave only correct components
+    data = data[:, idx, :]
+    # print(data.shape)
+    # 53 - components - data.shape[1]
 
     # get labels
     labels = pd.read_csv(labels_path, header=None)
@@ -91,6 +141,8 @@ def load_FBIRN(
     idx = indices[0].values - 1
     # filter the data: leave only correct components
     data = data[:, idx, :]
+    # print(data.shape)
+    # 53 - components - data.shape[1]
 
     # get labels
     labels = pd.read_csv(labels_path, header=None)
@@ -111,8 +163,8 @@ def load_OASIS(
     Return OASIS data
 
     Input:
-    only_first_sessions: bool = True - filter the second sessions from the output
-    only_two_classes: bool = True - filter all classes except for 0 and 1
+    only_first_sessions: bool = True - load only first sessions of each subject
+    only_two_classes: bool = True - filter all classes except for 0 and 1 (HC and AZ)
     dataset_path: str = DATA_ROOT.joinpath("oasis/OASIS3_AllData_allsessions.npz") - path to the dataset
     indices_path: str = DATA_ROOT.joinpath("oasis/correct_indices_GSP.csv") - path to correct indices/components
     labels_path: str = DATA_ROOT.joinpath("oasis/labels_OASIS_6_classes.csv") - path to labels
@@ -134,6 +186,9 @@ def load_OASIS(
     # filter the data: leave only correct components and the first 156 time points
     # (not all subjects have all 160 time points)
     data = data[:, idx, :156]
+    # print(data.shape)
+    # 53 - components - data.shape[1]
+    # 156 - time points - data.shape[2]
 
     # get labels
     labels = pd.read_csv(labels_path, header=None)
@@ -173,7 +228,7 @@ def load_balanced_OASIS():
     features, labels
     """
 
-    features, labels = load_OASIS(only_first_sessions = True, only_two_classes = True)
+    features, labels = load_OASIS(only_first_sessions=True, only_two_classes=True)
 
     # for 651 subjects with label 0
     filter_array_0 = []
@@ -204,3 +259,29 @@ def load_balanced_OASIS():
     labels = np.concatenate((labels_0, labels_1), axis=0)
 
     return features, labels
+
+
+class TSQuantileTransformer:
+    def __init__(self, *args, n_quantiles: int, **kwargs):
+        self.n_quantiles = n_quantiles
+        self._args = args
+        self._kwargs = kwargs
+        self.transforms = {}
+
+    def fit(self, features: np.ndarray):
+        for i in range(features.shape[1]):
+            self.transforms[i] = QuantileTransformer(
+                *self._args, n_quantiles=self.n_quantiles, **self._kwargs
+            ).fit(features[:, i, :])
+        return self
+
+    def transform(self, features: np.ndarray):
+        result = np.empty_like(features, dtype=np.int32)
+        for i in range(features.shape[1]):
+            result[:, i, :] = (
+                self.transforms[i].transform(features[:, i, :]) * self.n_quantiles
+            ).astype(np.int32)
+        return result
+
+
+load_COBRE()
