@@ -2,6 +2,7 @@
 """Models for experiments"""
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 
 class ResidualBlock(nn.Module):
@@ -121,3 +122,78 @@ class Transformer(nn.Module):
         fc_output = fc_output[:, -1, :]
         fc_output = self.fc(fc_output)
         return fc_output
+
+
+class AttnMLP(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        dropout: float = 0.5,
+        hidden_size: int = 128,
+        num_layers: int = 0,
+    ):
+        super(AttnMLP, self).__init__()
+        layers = [
+            nn.LayerNorm(input_size),
+            nn.Dropout(p=dropout),
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+        ]
+        for _ in range(num_layers):
+            layers.append(
+                ResidualBlock(
+                    nn.Sequential(
+                        nn.LayerNorm(hidden_size),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(hidden_size, hidden_size),
+                        nn.ReLU(),
+                    )
+                )
+            )
+        layers.append(
+            nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Dropout(p=dropout),
+                nn.Linear(hidden_size, output_size),
+            )
+        )
+
+        self.fc = nn.Sequential(*layers)
+
+        self.attn = nn.Sequential(
+            nn.Linear(141, 3 * hidden_size),
+            nn.ReLU(),
+            nn.Linear(3 * hidden_size, 140),
+        )
+
+    def get_attention(self, outputs):
+        # calculate mean over time
+        outputs_mean = outputs.mean(1).unsqueeze(1)
+
+        # add output's mean to the end of each output time dimension
+        # as a reference for attention layer
+        # and pass it to attention layer
+        weights_list = []
+        for output, output_mean in zip(outputs, outputs_mean):
+            result = torch.cat((output, output_mean)).swapaxes(0, 1)
+            result_tensor = self.attn(result)
+            weights_list.append(result_tensor)
+
+        weights = torch.stack(weights_list)
+        # normalize weights and swap axes to the output shape
+        normalized_weights = F.softmax(weights, dim=2).swapaxes(1, 2)
+        return normalized_weights
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        fc_output = self.fc(x.reshape(-1, fs))
+        fc_output = fc_output.reshape(bs, ln, -1)
+
+        # get weights form attention layer
+        normalized_weights = self.get_attention(fc_output)
+
+        # sum outputs with it's weights
+        logits = torch.einsum("ijk,ijk->ik", fc_output, normalized_weights)
+
+        return logits

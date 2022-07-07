@@ -8,7 +8,7 @@ import torch
 
 from src.settings import ASSETS_ROOT, LOGS_ROOT, UTCNOW
 from src.ts_data import load_ABIDE1, load_COBRE, load_FBIRN, load_OASIS
-from src.ts_model import LSTM, MLP, Transformer
+from src.ts_model import LSTM, MLP, Transformer, AttnMLP
 
 sns.set_theme(style="whitegrid", font_scale=2, rc={"figure.figsize": (18, 9)})
 
@@ -208,18 +208,18 @@ class Introspection:
 
 if __name__ == "__main__":
     dataset_name = "fbirn"
-    model_name = "mlp"
+    model_name = "attn_mlp"
     model_path = LOGS_ROOT.joinpath(
-        "220629.030429-ts-mlp-oasis-qFalse/0000/model.best.pth"
+        "220705.183938-ts-mlp-oasis-qFalse/0000/model.best.pth"
     )
     image_path = ASSETS_ROOT.joinpath(f"images/{UTCNOW}-{model_name}-{dataset_name}")
 
-    hidden_size = 128
-    num_layers = 0
-    dropout = 0.14665514458122644
-    lr = 0.00027129837277095967
+    hidden_size = 49
+    num_layers = 4
+    dropout = 0.150402603192188
+    lr = 0.0001077124920489886
 
-    model = MLP(
+    model = AttnMLP(
         input_size=53,  # PRIOR
         output_size=2,  # PRIOR
         hidden_size=hidden_size,
