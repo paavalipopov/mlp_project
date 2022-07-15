@@ -58,6 +58,51 @@ def load_ABIDE1(
     return data, labels
 
 
+def load_ABIDE1_869(
+    dataset_path: str = DATA_ROOT.joinpath(
+        "abide869/ABIDE1_AllData_869Subjects_ICA.npz"
+    ),
+    indices_path: str = DATA_ROOT.joinpath("abide869/correct_indices_GSP.csv"),
+    labels_path: str = DATA_ROOT.joinpath("abide869/labels_ABIDE1_869Subjects.csv"),
+):
+    """
+    Return ABIDE1 data
+
+    Input:
+    dataset_path: str = DATA_ROOT.joinpath("abide/ABIDE1_AllData.h5")
+    - path to the dataset
+    indices_path: str = DATA_ROOT.joinpath("abide/correct_indices_GSP.csv")
+    - path to correct indices/components
+    labels_path: str = DATA_ROOT.joinpath("abide/labels_ABIDE1.csv")
+    - path to labels
+
+    Output:
+    features, labels
+    """
+
+    data = np.load(dataset_path)
+    # 869 - sessions - data.shape[0]
+    # 100 - components - data.shape[1]
+    # 295 - time points - data.shape[2]
+
+    # get correct indices/components
+    indices = pd.read_csv(indices_path, header=None)
+    idx = indices[0].values - 1
+
+    # filter the data: leave only correct components and the first 156 time points
+    # (not all subjects have all 160 time points)
+    data = data[:, idx, :]
+    # print(data.shape)
+    # 53 - components - data.shape[1]
+    # 156 - time points - data.shape[2]
+
+    # get labels
+    labels = pd.read_csv(labels_path, header=None)
+    labels = labels.values.flatten().astype("int") - 1
+
+    return data, labels
+
+
 def load_COBRE(
     dataset_path: str = DATA_ROOT.joinpath("cobre/COBRE_AllData.h5"),
     indices_path: str = DATA_ROOT.joinpath("cobre/correct_indices_GSP.csv"),
@@ -295,6 +340,3 @@ class TSQuantileTransformer:
                 self.transforms[i].transform(features[:, i, :]) * self.n_quantiles
             ).astype(np.int32)
         return result
-
-
-load_COBRE()
