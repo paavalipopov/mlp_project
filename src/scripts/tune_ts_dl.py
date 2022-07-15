@@ -17,15 +17,17 @@ from animus import EarlyStoppingCallback, IExperiment
 from animus.torch.callbacks import TorchCheckpointerCallback
 import wandb
 
-from src.settings import LOGS_ROOT, UTCNOW
+from src.settings import LOGS_ROOT, ASSETS_ROOT, UTCNOW
 from src.ts_data import (
     load_ABIDE1,
     load_COBRE,
     load_FBIRN,
     load_OASIS,
+    load_ABIDE1_869,
     TSQuantileTransformer,
 )
-from src.ts_model import LSTM, MLP, Transformer
+from src.ts_model import LSTM, MLP, Transformer, AttentionMLP, AnotherAttentionMLP
+from src.ts_MILC import combinedModel, NatureOneCNN, subjLSTM
 
 
 class Experiment(IExperiment):
@@ -57,9 +59,39 @@ class Experiment(IExperiment):
             features, labels = load_FBIRN()
         elif self._dataset == "cobre":
             features, labels = load_COBRE()
+        elif self._dataset == "abide_869":
+            features, labels = load_ABIDE1_869()
 
         self.data_shape = features.shape
 
+        if self._model == "milc":
+            # MILC encoder is trained for this data shape (needs check or encoder retraining)
+            if self._dataset == "oasis":
+                features = features[:, :, :140]
+                self.data_shape = features.shape
+
+            sample_x = self.data_shape[1]
+            sample_y = 20
+            samples_per_subject = 13
+            window_shift = 10
+
+            # reshape initial data into [num_of_subjects, samples_per_subject, sample_x, sample_y]
+            # there will be a window_shift overlap in 4th (sample_y) dimension
+            finalData = np.zeros(
+                (self.data_shape[0], samples_per_subject, sample_x, sample_y)
+            )
+            for i in range(self.data_shape[0]):
+                for j in range(samples_per_subject):
+                    # print(
+                    #     f"finalData[{i}, {j}, :, :] = features [{i}, :, {(j * window_shift)} : {(j * window_shift) + sample_y}]"
+                    # )
+                    finalData[i, j, :, :] = features[
+                        i, :, (j * window_shift) : (j * window_shift) + sample_y
+                    ]
+            features = torch.from_numpy(finalData).float()
+            self.data_shape = features.shape
+
+        print("data shape: ", self.data_shape)
         skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
         skf.get_n_splits(features, labels)
 
@@ -76,9 +108,10 @@ class Experiment(IExperiment):
             stratify=y_train,
         )
 
-        X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
-        X_val = np.swapaxes(X_val, 1, 2)  # [n_samples; seq_len; n_features]
-        X_test = np.swapaxes(X_test, 1, 2)  # [n_samples; seq_len; n_features]
+        if self._model != "milc":
+            X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
+            X_val = np.swapaxes(X_val, 1, 2)  # [n_samples; seq_len; n_features]
+            X_test = np.swapaxes(X_test, 1, 2)  # [n_samples; seq_len; n_features]
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
@@ -108,7 +141,7 @@ class Experiment(IExperiment):
         wandb_config = {}
 
         # setup experiment
-        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 20, self.max_epochs)
+        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 30, self.max_epochs)
 
         # setup data
         self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
@@ -122,18 +155,37 @@ class Experiment(IExperiment):
         }
 
         # setup model
-        if self._model == "mlp":
+        if self._model in ["mlp", "attention_mlp", "another_attention_mlp"]:
             hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
             num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
             dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
 
-            self.model = MLP(
-                input_size=self.data_shape[1],  # PRIOR
-                output_size=2,  # PRIOR
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                dropout=dropout,
-            )
+            if self._model == "mlp":
+                self.model = MLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    dropout=dropout,
+                )
+            elif self._model == "attention_mlp":
+                self.model = AttentionMLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    dropout=dropout,
+                )
+            if self._model == "another_attention_mlp":
+                self.model = AnotherAttentionMLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    dropout=dropout,
+                )
             wandb_config = {
                 "hidden_size": hidden_size,
                 "num_layers": num_layers,
@@ -187,23 +239,103 @@ class Experiment(IExperiment):
                 "fc_dropout": fc_dropout,
             }
 
+        elif self._model == "milc":
+            feature_size = 256
+            no_downsample = True
+            fMRI_twoD = False
+            end_with_relu = False
+            method = "sub-lstm"
+
+            encoder = NatureOneCNN(
+                self.data_shape[2],
+                feature_size,
+                no_downsample,
+                fMRI_twoD,
+                end_with_relu,
+                method,
+            )
+
+            if torch.cuda.is_available():
+                cudaID = str(torch.cuda.current_device())
+                device = torch.device("cuda:" + cudaID)
+                # device = torch.device("cuda:" + str(args.cuda_id))
+            else:
+                device = torch.device("cpu")
+
+            lstm_size = 200
+            lstm_layers = 1
+            ID = 4
+            gain = [0.05, 0.05, 0.05, 0.05, 0.05]
+            current_gain = gain[ID]
+
+            lstm_model = subjLSTM(
+                device,
+                feature_size,
+                lstm_size,
+                num_layers=lstm_layers,
+                freeze_embeddings=True,
+                gain=current_gain,
+            )
+
+            # path = ASSETS_ROOT.joinpath("pretrained_encoder/encoder.pt")
+            # model_dict = torch.load(path, map_location=device)
+
+            pre_training = "milc"
+            exp = "UFPT"
+            oldpath = ASSETS_ROOT.joinpath("pretrained_encoder")
+            self.model = combinedModel(
+                encoder,
+                lstm_model,
+                gain=current_gain,
+                PT=pre_training,
+                exp=exp,
+                device=device,
+                oldpath=oldpath,
+            )
+
         else:
             raise NotImplementedError()
 
         self.criterion = nn.CrossEntropyLoss()
 
-        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
-        self.optimizer = optim.Adam(
-            self.model.parameters(),
-            lr=lr,
-        )
-        wandb_config["lr"] = lr
+        if self._model == "milc":
+            lr = 0.0003
+
+            if exp in ["UFPT", "NPT"]:
+                self.optimizer = torch.optim.Adam(
+                    self.model.parameters(), lr=lr, eps=1e-5
+                )
+            else:
+                if pre_training in ["milc", "two-loss-milc"]:
+                    self.optimizer = torch.optim.Adam(
+                        list(self.model.decoder.parameters()),
+                        lr=lr,
+                        eps=1e-5,
+                    )
+                else:
+                    self.optimizer = torch.optim.Adam(
+                        list(self.model.decoder.parameters())
+                        + list(self.model.attn.parameters())
+                        + list(self.model.lstm.parameters()),
+                        lr=lr,
+                        eps=1e-5,
+                    )
+            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer, mode="min"
+            )
+        else:
+            lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+            self.optimizer = optim.Adam(
+                self.model.parameters(),
+                lr=lr,
+            )
+            wandb_config["lr"] = lr
 
         # setup callbacks
         self.callbacks = {
             "early-stop": EarlyStoppingCallback(
                 minimize=True,
-                patience=16,
+                patience=30,
                 dataset_key="valid",
                 metric_key="loss",
                 min_delta=0.001,
@@ -253,6 +385,7 @@ class Experiment(IExperiment):
                     self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
 
         self.dataset_metrics = {
+            "accuracy": report["precision"].loc["accuracy"],
             "score": report["auc"].loc["weighted"],
             "loss": total_loss,
         }
@@ -261,8 +394,10 @@ class Experiment(IExperiment):
         super().on_epoch_end(self)
         self.wandb_logger.log(
             {
+                "train_accuracy": self.epoch_metrics["train"]["accuracy"],
                 "train_score": self.epoch_metrics["train"]["score"],
                 "train_loss": self.epoch_metrics["train"]["loss"],
+                "valid_accuracy": self.epoch_metrics["valid"]["accuracy"],
                 "valid_score": self.epoch_metrics["valid"]["score"],
                 "valid_loss": self.epoch_metrics["valid"]["loss"],
             },
@@ -313,6 +448,7 @@ class Experiment(IExperiment):
         print("Loss ", total_loss)
         self.wandb_logger.log(
             {
+                "test_accuracy": report["precision"].loc["accuracy"],
                 "test_score": report["auc"].loc["weighted"],
                 "test_loss": total_loss,
             },
@@ -351,11 +487,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        choices=["mlp", "attention_mlp", "lstm", "transformer"],
+        choices=[
+            "mlp",
+            "attention_mlp",
+            "another_attention_mlp",
+            "lstm",
+            "transformer",
+            "milc",
+        ],
         required=True,
     )
     parser.add_argument(
-        "--ds", type=str, choices=["oasis", "abide", "fbirn", "cobre"], required=True
+        "--ds",
+        type=str,
+        choices=["oasis", "abide", "fbirn", "cobre", "abide_869"],
+        required=True,
     )
     boolean_flag(parser, "quantile", default=False)
     parser.add_argument("--max-epochs", type=int, default=20)
