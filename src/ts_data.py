@@ -319,6 +319,38 @@ def load_balanced_OASIS():
     return features, labels
 
 
+def load_UKB(
+    dataset_path: str = "/data/users2/ppopov1/UKB_data/UKB_sex_data.npz",
+    indices_path: str = "/data/users2/ppopov1/UKB_data/correct_indices_GSP.csv",
+):
+    """
+    Return UKB data
+
+    Input:
+    dataset_path: str = "/data/users2/ppopov1/UKB_data/UKB_sex_data.npz"
+    - path to the dataset with lablels
+    indices_path: str = "/data/users2/ppopov1/UKB_data/correct_indices_GSP.csv"
+    - path to correct indices/components
+
+
+    Output:
+    features, labels
+    """
+
+    features = None
+    labels = None
+    with np.load(dataset_path) as npzfile:
+        features = npzfile["features"]
+        labels = npzfile["labels"]
+
+    # get correct indices/components
+    indices = pd.read_csv(indices_path, header=None)
+    idx = indices[0].values - 1
+    features = features[:, idx, :]
+
+    return features, labels
+
+
 class TSQuantileTransformer:
     def __init__(self, *args, n_quantiles: int, **kwargs):
         self.n_quantiles = n_quantiles
