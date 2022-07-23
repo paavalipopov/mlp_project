@@ -24,6 +24,7 @@ from src.ts_data import (
     load_FBIRN,
     load_OASIS,
     load_ABIDE1_869,
+    load_UKB,
     TSQuantileTransformer,
 )
 from src.ts_model import LSTM, MLP, Transformer, AttentionMLP, AnotherAttentionMLP
@@ -61,6 +62,8 @@ class Experiment(IExperiment):
             features, labels = load_COBRE()
         elif self._dataset == "abide_869":
             features, labels = load_ABIDE1_869()
+        elif self._dataset == "ukb":
+            features, labels = load_UKB()
 
         self.data_shape = features.shape
 
@@ -140,7 +143,6 @@ class Experiment(IExperiment):
         # config dict for wandb
         wandb_config = {}
 
-        # setup experiment
         self.num_epochs = self._trial.suggest_int("exp.num_epochs", 30, self.max_epochs)
 
         # setup data
@@ -349,6 +351,8 @@ class Experiment(IExperiment):
             ),
         }
 
+        wandb_config["num_epochs"] = self.num_epochs
+        wandb_config["batch_size"] = self.batch_size
         self.wandb_logger.config.update(wandb_config)
 
     def run_dataset(self) -> None:
@@ -359,7 +363,7 @@ class Experiment(IExperiment):
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
-                logits = self.model(data)
+                logits, _ = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
 
@@ -375,6 +379,7 @@ class Experiment(IExperiment):
         y_test = np.hstack(all_targets)
         y_score = np.vstack(all_scores)
         y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
+
         report = get_classification_report(
             y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
         )
@@ -416,19 +421,23 @@ class Experiment(IExperiment):
         self.model.train(False)
         self.model.zero_grad()
 
-        all_scores, all_targets = [], []
+        all_scores, all_targets, all_raw_scores = [], [], []
         total_loss = 0.0
 
         with torch.set_grad_enabled(False):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(test_ds)):
                 self.optimizer.zero_grad()
-                logits = self.model(data)
+                logits, raw_logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
                 total_loss += loss.sum().item()
+
+                # prepare raw scores (score[number_of_time_slices] for each subject)
+                raw_scores = torch.softmax(raw_logits, dim=-1)
+                all_raw_scores.append(raw_scores.cpu().detach().numpy())
 
         total_loss /= self.dataset_batch_step
 
@@ -444,6 +453,7 @@ class Experiment(IExperiment):
                 if "support" not in key:
                     self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
 
+        print("Accuracy ", report["precision"].loc["accuracy"])
         print("AUC ", report["auc"].loc["weighted"])
         print("Loss ", total_loss)
         self.wandb_logger.log(
@@ -452,6 +462,21 @@ class Experiment(IExperiment):
                 "test_score": report["auc"].loc["weighted"],
                 "test_loss": total_loss,
             },
+        )
+
+        # raw scores for logistic regression
+        all_targets = np.concatenate(all_targets, axis=0)
+        all_raw_scores = np.concatenate(all_raw_scores, axis=0)
+        all_mean_scores = np.mean(all_raw_scores, axis=1)
+        print("all_targets.shape: ", all_targets.shape)
+        print("all_raw_scores.shape: ", all_raw_scores.shape)
+        print("all_mean_scores.shape: ", all_mean_scores.shape)
+
+        np.savez(
+            f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/test_scores.npz",
+            raw_scores=all_raw_scores,
+            mean_scores=all_mean_scores,
+            targets=all_targets,
         )
 
     def on_experiment_end(self, exp: "IExperiment") -> None:
@@ -500,7 +525,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--ds",
         type=str,
-        choices=["oasis", "abide", "fbirn", "cobre", "abide_869"],
+        choices=["oasis", "abide", "fbirn", "cobre", "abide_869", "ukb"],
         required=True,
     )
     boolean_flag(parser, "quantile", default=False)
