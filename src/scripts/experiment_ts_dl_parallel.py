@@ -57,6 +57,12 @@ class Experiment(IExperiment):
         self.max_epochs = max_epochs
         self.logdir = logdir
 
+        if torch.cuda.is_available():
+            cudaID = str(torch.cuda.current_device())
+            self._device = torch.device("cuda:" + cudaID)
+        else:
+            self._device = torch.device("cpu")
+
     def initialize_dataset(self) -> None:
         if self._dataset == "oasis":
             features, labels = load_OASIS()
@@ -115,7 +121,7 @@ class Experiment(IExperiment):
 
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project=f"tune-{self._model}-{self._dataset}",
+            project=f"experiment-{self._model}-{self._dataset}",
             name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
         )
         # config dict for wandb
@@ -136,9 +142,10 @@ class Experiment(IExperiment):
 
         # setup model
         if self._model in ["mlp", "attention_mlp", "another_attention_mlp"]:
-            hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
-            num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-            dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
+            # ukb
+            hidden_size = 50
+            num_layers = 1
+            dropout = 0.55
 
             if self._model == "mlp":
                 self.model = MLP(
@@ -228,9 +235,16 @@ class Experiment(IExperiment):
         else:
             raise NotImplementedError()
 
+        if torch.cuda.device_count() > 1:
+            print("Let's use", torch.cuda.device_count(), "GPUs!")
+            # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
+            self.model = nn.DataParallel(self.model)
+
+        self.model.to(self._device)
+
         self.criterion = nn.CrossEntropyLoss()
 
-        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+        lr = 0.000017
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
@@ -266,7 +280,10 @@ class Experiment(IExperiment):
 
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
+                data = data.to(self._device)
+                target = target.to(self._device)
                 self.optimizer.zero_grad()
+
                 logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
@@ -321,7 +338,8 @@ class Experiment(IExperiment):
         f = open(f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/model.storage.json")
         logpath = json.load(f)["storage"][0]["logpath"]
         checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
-        self.model.load_state_dict(checkpoint)
+        self.model.module.load_state_dict(checkpoint)
+        self.model.to(self._device)
         self.model.train(False)
         self.model.zero_grad()
 
@@ -330,7 +348,10 @@ class Experiment(IExperiment):
 
         with torch.set_grad_enabled(False):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(test_ds)):
+                data = data.to(self._device)
+                target = target.to(self._device)
                 self.optimizer.zero_grad()
+
                 logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
@@ -436,5 +457,5 @@ if __name__ == "__main__":
         quantile=args.quantile,
         n_splits=args.num_splits,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-tune-{args.model}-{args.ds}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-experiment-{args.model}-{args.ds}/",
     ).tune(n_trials=args.num_trials)

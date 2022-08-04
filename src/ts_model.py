@@ -53,9 +53,13 @@ class MLP(nn.Module):
 
     def forward(self, x):
         bs, ln, fs = x.shape
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
         fc_output = self.fc(x.view(-1, fs))
-        fc_output = fc_output.view(bs, ln, -1).mean(1)  # .squeeze(1)
-        return fc_output
+        fc_output = fc_output.view(bs, ln, -1)
+        logits = fc_output.mean(1)
+        return logits
 
 
 class LSTM(nn.Module):
@@ -201,6 +205,7 @@ class AttentionMLP(nn.Module):
 
 
 class AnotherAttentionMLP(nn.Module):
+    # not working
     def __init__(
         self,
         input_size: int,
@@ -278,4 +283,21 @@ class AnotherAttentionMLP(nn.Module):
         # sum outputs weight-wise
         logits = torch.einsum("ijk,ijk->ik", fc_output, normalized_weights)
 
+        return logits
+
+
+class EnsembleLogisticRegression(nn.Module):
+    def __init__(self, input_size: int, output_size: int):
+        super(EnsembleLogisticRegression, self).__init__()
+        self.linear = torch.nn.Linear(input_size, output_size)
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
+
+        output = self.linear(x.view(-1, fs))
+        output = output.view(bs, ln, -1)
+        logits = output.mean(1)
         return logits

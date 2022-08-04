@@ -115,16 +115,17 @@ class Experiment(IExperiment):
 
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project=f"tune-{self._model}-{self._dataset}",
+            project=f"experiment-{self._model}-{self._dataset}",
             name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
         )
         # config dict for wandb
         wandb_config = {}
 
-        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 30, self.max_epochs)
+        # setup experiment
+        self.num_epochs = self.max_epochs
 
         # setup data
-        self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
+        self.batch_size = 7  # arbitrary choice
         self.datasets = {
             "train": DataLoader(
                 self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
@@ -136,9 +137,25 @@ class Experiment(IExperiment):
 
         # setup model
         if self._model in ["mlp", "attention_mlp", "another_attention_mlp"]:
-            hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
-            num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-            dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
+            # # abide 869
+            # hidden_size = 173
+            # num_layers = 1
+            # dropout = 0.11134934868162844
+
+            # # fbirn
+            # hidden_size = 40
+            # num_layers = 2
+            # dropout = 0.4181932705670766
+
+            # oasis
+            hidden_size = 36
+            num_layers = 0
+            dropout = 0.3194693116057663
+
+            # # ukb
+            # hidden_size = 50
+            # num_layers = 1
+            # dropout = 0.55
 
             if self._model == "mlp":
                 self.model = MLP(
@@ -230,7 +247,7 @@ class Experiment(IExperiment):
 
         self.criterion = nn.CrossEntropyLoss()
 
-        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+        lr = 0.000275501544945563
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
@@ -241,7 +258,7 @@ class Experiment(IExperiment):
         self.callbacks = {
             "early-stop": EarlyStoppingCallback(
                 minimize=True,
-                patience=30,
+                patience=16,
                 dataset_key="valid",
                 metric_key="loss",
                 min_delta=0.001,
@@ -283,7 +300,6 @@ class Experiment(IExperiment):
         y_test = np.hstack(all_targets)
         y_score = np.vstack(all_scores)
         y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
-
         report = get_classification_report(
             y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
         )
@@ -294,7 +310,6 @@ class Experiment(IExperiment):
                     self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
 
         self.dataset_metrics = {
-            "accuracy": report["precision"].loc["accuracy"],
             "score": report["auc"].loc["weighted"],
             "loss": total_loss,
         }
@@ -303,10 +318,8 @@ class Experiment(IExperiment):
         super().on_epoch_end(self)
         self.wandb_logger.log(
             {
-                "train_accuracy": self.epoch_metrics["train"]["accuracy"],
                 "train_score": self.epoch_metrics["train"]["score"],
                 "train_loss": self.epoch_metrics["train"]["loss"],
-                "valid_accuracy": self.epoch_metrics["valid"]["accuracy"],
                 "valid_score": self.epoch_metrics["valid"]["score"],
                 "valid_loss": self.epoch_metrics["valid"]["loss"],
             },
@@ -436,5 +449,5 @@ if __name__ == "__main__":
         quantile=args.quantile,
         n_splits=args.num_splits,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-tune-{args.model}-{args.ds}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-experiment-{args.model}-{args.ds}/",
     ).tune(n_trials=args.num_trials)

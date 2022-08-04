@@ -1,5 +1,5 @@
 # pylint: disable=W0201,W0223,C0103,C0115,C0116,R0902,E1101,R0914
-"""Experiment on OASIS data with LSTM model"""
+"""Script for tuning different models on different datasets"""
 import argparse
 import json
 
@@ -17,30 +17,79 @@ from animus import EarlyStoppingCallback, IExperiment
 from animus.torch.callbacks import TorchCheckpointerCallback
 import wandb
 
-from src.settings import LOGS_ROOT, UTCNOW
+from src.settings import LOGS_ROOT, ASSETS_ROOT, UTCNOW
 from src.ts_data import (
     load_ABIDE1,
     load_COBRE,
     load_FBIRN,
     load_OASIS,
+    load_ABIDE1_869,
+    load_UKB,
     TSQuantileTransformer,
 )
-from src.ts_model import LSTM, MLP, Transformer
+from src.ts_MILC import combinedModel, NatureOneCNN, subjLSTM
 
 
 class Experiment(IExperiment):
-    def __init__(self, max_epochs: int, logdir: str, project_name: str) -> None:
+    def __init__(
+        self,
+        dataset: str,
+        quantile: bool,
+        n_splits: int,
+        max_epochs: int,
+        logdir: str,
+    ) -> None:
         super().__init__()
+        assert not quantile, "Not implemented yet"
+        self._dataset = dataset
+        self._quantile: bool = quantile
+        self.n_splits = n_splits
         self._trial: optuna.Trial = None
         self.max_epochs = max_epochs
         self.logdir = logdir
-        self.project_name = project_name
 
-    def initialize_data(self) -> None:
-        features, labels = load_OASIS()
+    def initialize_dataset(self) -> None:
+        if self._dataset == "oasis":
+            features, labels = load_OASIS()
+        elif self._dataset == "abide":
+            features, labels = load_ABIDE1()
+        elif self._dataset == "fbirn":
+            features, labels = load_FBIRN()
+        elif self._dataset == "cobre":
+            features, labels = load_COBRE()
+        elif self._dataset == "abide_869":
+            features, labels = load_ABIDE1_869()
+        elif self._dataset == "ukb":
+            features, labels = load_UKB()
+
+        # MILC encoder is trained for this data shape (needs check or encoder retraining)
+        if self._dataset == "oasis":
+            features = features[:, :, :140]
+            self.data_shape = features.shape
+
+        sample_x = self.data_shape[1]
+        sample_y = 20
+        samples_per_subject = 13
+        window_shift = 10
+
+        # reshape initial data into [num_of_subjects, samples_per_subject, sample_x, sample_y]
+        # there will be a window_shift overlap in 4th (sample_y) dimension
+        finalData = np.zeros(
+            (self.data_shape[0], samples_per_subject, sample_x, sample_y)
+        )
+        for i in range(self.data_shape[0]):
+            for j in range(samples_per_subject):
+                # print(
+                #     f"finalData[{i}, {j}, :, :] = features [{i}, :, {(j * window_shift)} : {(j * window_shift) + sample_y}]"
+                # )
+                finalData[i, j, :, :] = features[
+                    i, :, (j * window_shift) : (j * window_shift) + sample_y
+                ]
+        features = torch.from_numpy(finalData).float()
         self.data_shape = features.shape
 
-        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        print("data shape: ", self.data_shape)
+        skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
         skf.get_n_splits(features, labels)
 
         train_index, test_index = list(skf.split(features, labels))[self.k]
@@ -51,14 +100,10 @@ class Experiment(IExperiment):
         X_train, X_val, y_train, y_val = train_test_split(
             X_train,
             y_train,
-            test_size=165,
+            test_size=self.data_shape[0] // self.n_splits,
             random_state=42 + self._trial.number,
             stratify=y_train,
         )
-
-        X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
-        X_val = np.swapaxes(X_val, 1, 2)  # [n_samples; seq_len; n_features]
-        X_test = np.swapaxes(X_test, 1, 2)
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
@@ -74,20 +119,23 @@ class Experiment(IExperiment):
         )
 
     def on_experiment_start(self, exp: "IExperiment"):
-        # init wandb logger
-        self.wandb_logger: wandb.run = wandb.init(
-            project=self.project_name,
-            name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
-        )
-
         super().on_experiment_start(exp)
 
-        self.initialize_data()
+        # init data
+        self.initialize_dataset()
 
-        # setup experiment
-        self.num_epochs = 64
+        # init wandb logger
+        self.wandb_logger: wandb.run = wandb.init(
+            project=f"tune-milc-{self._dataset}",
+            name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
+        )
+        # config dict for wandb
+        wandb_config = {}
+
+        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 30, self.max_epochs)
+
         # setup data
-        self.batch_size = 16
+        self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
         self.datasets = {
             "train": DataLoader(
                 self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
@@ -96,57 +144,106 @@ class Experiment(IExperiment):
                 self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
             ),
         }
-        # setup model
-        hidden_size = 52
-        num_layers = 3
-        bidirectional = False
-        fc_dropout = 0.2626756675371412
-        lr = 0.000403084751422323
 
-        self.model = LSTM(
-            input_size=self.data_shape[1],  # 53
-            input_len=self.data_shape[2],  # 156
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            batch_first=True,
-            bidirectional=bidirectional,
-            fc_dropout=fc_dropout,
+        feature_size = 256
+        no_downsample = True
+        fMRI_twoD = False
+        end_with_relu = False
+        method = "sub-lstm"
+
+        encoder = NatureOneCNN(
+            self.data_shape[2],
+            feature_size,
+            no_downsample,
+            fMRI_twoD,
+            end_with_relu,
+            method,
+        )
+
+        if torch.cuda.is_available():
+            cudaID = str(torch.cuda.current_device())
+            device = torch.device("cuda:" + cudaID)
+            # device = torch.device("cuda:" + str(args.cuda_id))
+        else:
+            device = torch.device("cpu")
+
+        lstm_size = 200
+        lstm_layers = 1
+        ID = 4
+        gain = [0.05, 0.05, 0.05, 0.05, 0.05]
+        current_gain = gain[ID]
+
+        lstm_model = subjLSTM(
+            device,
+            feature_size,
+            lstm_size,
+            num_layers=lstm_layers,
+            freeze_embeddings=True,
+            gain=current_gain,
+        )
+
+        # path = ASSETS_ROOT.joinpath("pretrained_encoder/encoder.pt")
+        # model_dict = torch.load(path, map_location=device)
+
+        pre_training = "milc"
+        exp = "UFPT"
+        oldpath = ASSETS_ROOT.joinpath("pretrained_encoder")
+        self.model = combinedModel(
+            encoder,
+            lstm_model,
+            gain=current_gain,
+            PT=pre_training,
+            exp=exp,
+            device=device,
+            oldpath=oldpath,
         )
 
         self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.Adam(
-            self.model.parameters(),
-            lr=lr,
+
+        lr = 0.0003
+
+        if exp in ["UFPT", "NPT"]:
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr, eps=1e-5)
+        else:
+            if pre_training in ["milc", "two-loss-milc"]:
+                self.optimizer = torch.optim.Adam(
+                    list(self.model.decoder.parameters()),
+                    lr=lr,
+                    eps=1e-5,
+                )
+            else:
+                self.optimizer = torch.optim.Adam(
+                    list(self.model.decoder.parameters())
+                    + list(self.model.attn.parameters())
+                    + list(self.model.lstm.parameters()),
+                    lr=lr,
+                    eps=1e-5,
+                )
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode="min"
         )
+
         # setup callbacks
         self.callbacks = {
             "early-stop": EarlyStoppingCallback(
                 minimize=True,
-                patience=16,
+                patience=30,
                 dataset_key="valid",
                 metric_key="loss",
                 min_delta=0.001,
             ),
             "checkpointer": TorchCheckpointerCallback(
                 exp_attr="model",
-                logdir=f"{self.logdir}/k_{self.k}/{self._trial.number:04d}",
+                logdir=f"{self.logdir}k_{self.k}/{self._trial.number:04d}",
                 dataset_key="valid",
                 metric_key="loss",
                 minimize=True,
             ),
         }
 
-        self.wandb_logger.config.update(
-            {
-                "num_epochs": self.num_epochs,
-                "batch_size": self.batch_size,
-                "hidden_size": hidden_size,
-                "num_layers": num_layers,
-                "bidirectional": bidirectional,
-                "fc_dropout": fc_dropout,
-                "lr": lr,
-            }
-        )
+        wandb_config["num_epochs"] = self.num_epochs
+        wandb_config["batch_size"] = self.batch_size
+        self.wandb_logger.config.update(wandb_config)
 
     def run_dataset(self) -> None:
         all_scores, all_targets = [], []
@@ -172,6 +269,7 @@ class Experiment(IExperiment):
         y_test = np.hstack(all_targets)
         y_score = np.vstack(all_scores)
         y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
+
         report = get_classification_report(
             y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
         )
@@ -182,6 +280,7 @@ class Experiment(IExperiment):
                     self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
 
         self.dataset_metrics = {
+            "accuracy": report["precision"].loc["accuracy"],
             "score": report["auc"].loc["weighted"],
             "loss": total_loss,
         }
@@ -190,8 +289,10 @@ class Experiment(IExperiment):
         super().on_epoch_end(self)
         self.wandb_logger.log(
             {
+                "train_accuracy": self.epoch_metrics["train"]["accuracy"],
                 "train_score": self.epoch_metrics["train"]["score"],
                 "train_loss": self.epoch_metrics["train"]["loss"],
+                "valid_accuracy": self.epoch_metrics["valid"]["accuracy"],
                 "valid_score": self.epoch_metrics["valid"]["score"],
                 "valid_loss": self.epoch_metrics["valid"]["loss"],
             },
@@ -210,19 +311,23 @@ class Experiment(IExperiment):
         self.model.train(False)
         self.model.zero_grad()
 
-        all_scores, all_targets = [], []
+        all_scores, all_targets, all_raw_scores = [], [], []
         total_loss = 0.0
 
         with torch.set_grad_enabled(False):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(test_ds)):
                 self.optimizer.zero_grad()
-                logits = self.model(data)
+                logits, raw_logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
                 total_loss += loss.sum().item()
+
+                # prepare raw scores (score[number_of_time_slices] for each subject)
+                raw_scores = torch.softmax(raw_logits, dim=-1)
+                all_raw_scores.append(raw_scores.cpu().detach().numpy())
 
         total_loss /= self.dataset_batch_step
 
@@ -238,13 +343,30 @@ class Experiment(IExperiment):
                 if "support" not in key:
                     self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
 
+        print("Accuracy ", report["precision"].loc["accuracy"])
         print("AUC ", report["auc"].loc["weighted"])
         print("Loss ", total_loss)
         self.wandb_logger.log(
             {
+                "test_accuracy": report["precision"].loc["accuracy"],
                 "test_score": report["auc"].loc["weighted"],
                 "test_loss": total_loss,
             },
+        )
+
+        # raw scores for logistic regression
+        all_targets = np.concatenate(all_targets, axis=0)
+        all_raw_scores = np.concatenate(all_raw_scores, axis=0)
+        all_mean_scores = np.mean(all_raw_scores, axis=1)
+        print("all_targets.shape: ", all_targets.shape)
+        print("all_raw_scores.shape: ", all_raw_scores.shape)
+        print("all_mean_scores.shape: ", all_mean_scores.shape)
+
+        np.savez(
+            f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/test_scores.npz",
+            raw_scores=all_raw_scores,
+            mean_scores=all_mean_scores,
+            targets=all_targets,
         )
 
     def on_experiment_end(self, exp: "IExperiment") -> None:
@@ -259,11 +381,10 @@ class Experiment(IExperiment):
     def _objective(self, trial) -> float:
         self._trial = trial
         self.run()
-
         return self._score
 
     def tune(self, n_trials: int):
-        for k in range(5):
+        for k in range(self.n_splits):
             self.k = k
             self.study = optuna.create_study(direction="maximize")
             self.study.optimize(self._objective, n_trials=n_trials, n_jobs=1)
@@ -278,13 +399,22 @@ if __name__ == "__main__":
     warnings.filterwarnings("ignore")
 
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--ds",
+        type=str,
+        choices=["oasis", "abide", "fbirn", "cobre", "abide_869", "ukb"],
+        required=True,
+    )
+    boolean_flag(parser, "quantile", default=False)
     parser.add_argument("--max-epochs", type=int, default=20)
     parser.add_argument("--num-trials", type=int, default=1)
+    parser.add_argument("--num-splits", type=int, default=5)
     args = parser.parse_args()
 
-    project_name = "lstm-oasis"
     Experiment(
+        dataset=args.ds,
+        quantile=args.quantile,
+        n_splits=args.num_splits,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-{project_name}/",
-        project_name=project_name,
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-tune-{args.model}-{args.ds}/",
     ).tune(n_trials=args.num_trials)

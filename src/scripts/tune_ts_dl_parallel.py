@@ -57,6 +57,12 @@ class Experiment(IExperiment):
         self.max_epochs = max_epochs
         self.logdir = logdir
 
+        if torch.cuda.is_available():
+            cudaID = str(torch.cuda.current_device())
+            self._device = torch.device("cuda:" + cudaID)
+        else:
+            self._device = torch.device("cpu")
+
     def initialize_dataset(self) -> None:
         if self._dataset == "oasis":
             features, labels = load_OASIS()
@@ -228,6 +234,13 @@ class Experiment(IExperiment):
         else:
             raise NotImplementedError()
 
+        if torch.cuda.device_count() > 1:
+            print("Let's use", torch.cuda.device_count(), "GPUs!")
+            # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
+            self.model = nn.DataParallel(self.model)
+
+        self.model.to(self._device)
+
         self.criterion = nn.CrossEntropyLoss()
 
         lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
@@ -266,7 +279,10 @@ class Experiment(IExperiment):
 
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
+                data = data.to(self._device)
+                target = target.to(self._device)
                 self.optimizer.zero_grad()
+
                 logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
@@ -321,7 +337,8 @@ class Experiment(IExperiment):
         f = open(f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/model.storage.json")
         logpath = json.load(f)["storage"][0]["logpath"]
         checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
-        self.model.load_state_dict(checkpoint)
+        self.model.module.load_state_dict(checkpoint)
+        self.model.to(self._device)
         self.model.train(False)
         self.model.zero_grad()
 
@@ -330,7 +347,10 @@ class Experiment(IExperiment):
 
         with torch.set_grad_enabled(False):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(test_ds)):
+                data = data.to(self._device)
+                target = target.to(self._device)
                 self.optimizer.zero_grad()
+
                 logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
