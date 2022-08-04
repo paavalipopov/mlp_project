@@ -121,7 +121,7 @@ class Experiment(IExperiment):
 
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project=f"tune-{self._model}-{self._dataset}",
+            project=f"experiment-{self._model}-{self._dataset}",
             name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
         )
         # config dict for wandb
@@ -142,9 +142,10 @@ class Experiment(IExperiment):
 
         # setup model
         if self._model in ["mlp", "attention_mlp", "another_attention_mlp"]:
-            hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
-            num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-            dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
+            # ukb
+            hidden_size = 50
+            num_layers = 1
+            dropout = 0.55
 
             if self._model == "mlp":
                 self.model = MLP(
@@ -243,7 +244,7 @@ class Experiment(IExperiment):
 
         self.criterion = nn.CrossEntropyLoss()
 
-        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+        lr = 0.000017
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
@@ -456,5 +457,5 @@ if __name__ == "__main__":
         quantile=args.quantile,
         n_splits=args.num_splits,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-tune-{args.model}-{args.ds}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-experiment-{args.model}-{args.ds}/",
     ).tune(n_trials=args.num_trials)

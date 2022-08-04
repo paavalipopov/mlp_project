@@ -57,12 +57,6 @@ class Experiment(IExperiment):
         self.max_epochs = max_epochs
         self.logdir = logdir
 
-        if torch.cuda.is_available():
-            cudaID = str(torch.cuda.current_device())
-            self._device = torch.device("cuda:" + cudaID)
-        else:
-            self._device = torch.device("cpu")
-
     def initialize_dataset(self) -> None:
         if self._dataset == "oasis":
             features, labels = load_OASIS()
@@ -121,16 +115,17 @@ class Experiment(IExperiment):
 
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project=f"tune-{self._model}-{self._dataset}",
+            project=f"experiment-{self._model}-{self._dataset}",
             name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
         )
         # config dict for wandb
         wandb_config = {}
 
-        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 30, self.max_epochs)
+        # setup experiment
+        self.num_epochs = self.max_epochs
 
         # setup data
-        self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
+        self.batch_size = 7  # arbitrary choice
         self.datasets = {
             "train": DataLoader(
                 self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
@@ -142,9 +137,25 @@ class Experiment(IExperiment):
 
         # setup model
         if self._model in ["mlp", "attention_mlp", "another_attention_mlp"]:
-            hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
-            num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-            dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
+            # # abide 869
+            # hidden_size = 173
+            # num_layers = 1
+            # dropout = 0.11134934868162844
+
+            # # fbirn
+            # hidden_size = 40
+            # num_layers = 2
+            # dropout = 0.4181932705670766
+
+            # oasis
+            hidden_size = 36
+            num_layers = 0
+            dropout = 0.3194693116057663
+
+            # # ukb
+            # hidden_size = 50
+            # num_layers = 1
+            # dropout = 0.55
 
             if self._model == "mlp":
                 self.model = MLP(
@@ -234,16 +245,9 @@ class Experiment(IExperiment):
         else:
             raise NotImplementedError()
 
-        if torch.cuda.device_count() > 1:
-            print("Let's use", torch.cuda.device_count(), "GPUs!")
-            # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
-            self.model = nn.DataParallel(self.model)
-
-        self.model.to(self._device)
-
         self.criterion = nn.CrossEntropyLoss()
 
-        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+        lr = 0.000275501544945563
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
@@ -254,7 +258,7 @@ class Experiment(IExperiment):
         self.callbacks = {
             "early-stop": EarlyStoppingCallback(
                 minimize=True,
-                patience=30,
+                patience=16,
                 dataset_key="valid",
                 metric_key="loss",
                 min_delta=0.001,
@@ -279,10 +283,7 @@ class Experiment(IExperiment):
 
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
-                data = data.to(self._device)
-                target = target.to(self._device)
                 self.optimizer.zero_grad()
-
                 logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
@@ -299,7 +300,6 @@ class Experiment(IExperiment):
         y_test = np.hstack(all_targets)
         y_score = np.vstack(all_scores)
         y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
-
         report = get_classification_report(
             y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
         )
@@ -310,7 +310,6 @@ class Experiment(IExperiment):
                     self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
 
         self.dataset_metrics = {
-            "accuracy": report["precision"].loc["accuracy"],
             "score": report["auc"].loc["weighted"],
             "loss": total_loss,
         }
@@ -319,10 +318,8 @@ class Experiment(IExperiment):
         super().on_epoch_end(self)
         self.wandb_logger.log(
             {
-                "train_accuracy": self.epoch_metrics["train"]["accuracy"],
                 "train_score": self.epoch_metrics["train"]["score"],
                 "train_loss": self.epoch_metrics["train"]["loss"],
-                "valid_accuracy": self.epoch_metrics["valid"]["accuracy"],
                 "valid_score": self.epoch_metrics["valid"]["score"],
                 "valid_loss": self.epoch_metrics["valid"]["loss"],
             },
@@ -337,8 +334,7 @@ class Experiment(IExperiment):
         f = open(f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/model.storage.json")
         logpath = json.load(f)["storage"][0]["logpath"]
         checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
-        self.model.module.load_state_dict(checkpoint)
-        self.model.to(self._device)
+        self.model.load_state_dict(checkpoint)
         self.model.train(False)
         self.model.zero_grad()
 
@@ -347,10 +343,7 @@ class Experiment(IExperiment):
 
         with torch.set_grad_enabled(False):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(test_ds)):
-                data = data.to(self._device)
-                target = target.to(self._device)
                 self.optimizer.zero_grad()
-
                 logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
@@ -456,5 +449,5 @@ if __name__ == "__main__":
         quantile=args.quantile,
         n_splits=args.num_splits,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-tune-{args.model}-{args.ds}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-experiment-{args.model}-{args.ds}/",
     ).tune(n_trials=args.num_trials)

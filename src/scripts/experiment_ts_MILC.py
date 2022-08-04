@@ -27,14 +27,12 @@ from src.ts_data import (
     load_UKB,
     TSQuantileTransformer,
 )
-from src.ts_model import LSTM, MLP, Transformer, AttentionMLP, AnotherAttentionMLP
 from src.ts_MILC import combinedModel, NatureOneCNN, subjLSTM
 
 
 class Experiment(IExperiment):
     def __init__(
         self,
-        model: str,
         dataset: str,
         quantile: bool,
         n_splits: int,
@@ -43,7 +41,6 @@ class Experiment(IExperiment):
     ) -> None:
         super().__init__()
         assert not quantile, "Not implemented yet"
-        self._model = model
         self._dataset = dataset
         self._quantile: bool = quantile
         self.n_splits = n_splits
@@ -65,34 +62,31 @@ class Experiment(IExperiment):
         elif self._dataset == "ukb":
             features, labels = load_UKB()
 
-        self.data_shape = features.shape
-
-        if self._model == "milc":
-            # MILC encoder is trained for this data shape (needs check or encoder retraining)
-            if self._dataset == "oasis":
-                features = features[:, :, :140]
-                self.data_shape = features.shape
-
-            sample_x = self.data_shape[1]
-            sample_y = 20
-            samples_per_subject = 13
-            window_shift = 10
-
-            # reshape initial data into [num_of_subjects, samples_per_subject, sample_x, sample_y]
-            # there will be a window_shift overlap in 4th (sample_y) dimension
-            finalData = np.zeros(
-                (self.data_shape[0], samples_per_subject, sample_x, sample_y)
-            )
-            for i in range(self.data_shape[0]):
-                for j in range(samples_per_subject):
-                    # print(
-                    #     f"finalData[{i}, {j}, :, :] = features [{i}, :, {(j * window_shift)} : {(j * window_shift) + sample_y}]"
-                    # )
-                    finalData[i, j, :, :] = features[
-                        i, :, (j * window_shift) : (j * window_shift) + sample_y
-                    ]
-            features = torch.from_numpy(finalData).float()
+        # MILC encoder is trained for this data shape (needs check or encoder retraining)
+        if self._dataset == "oasis":
+            features = features[:, :, :140]
             self.data_shape = features.shape
+
+        sample_x = self.data_shape[1]
+        sample_y = 20
+        samples_per_subject = 13
+        window_shift = 10
+
+        # reshape initial data into [num_of_subjects, samples_per_subject, sample_x, sample_y]
+        # there will be a window_shift overlap in 4th (sample_y) dimension
+        finalData = np.zeros(
+            (self.data_shape[0], samples_per_subject, sample_x, sample_y)
+        )
+        for i in range(self.data_shape[0]):
+            for j in range(samples_per_subject):
+                # print(
+                #     f"finalData[{i}, {j}, :, :] = features [{i}, :, {(j * window_shift)} : {(j * window_shift) + sample_y}]"
+                # )
+                finalData[i, j, :, :] = features[
+                    i, :, (j * window_shift) : (j * window_shift) + sample_y
+                ]
+        features = torch.from_numpy(finalData).float()
+        self.data_shape = features.shape
 
         print("data shape: ", self.data_shape)
         skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
@@ -110,11 +104,6 @@ class Experiment(IExperiment):
             random_state=42 + self._trial.number,
             stratify=y_train,
         )
-
-        if self._model != "milc":
-            X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
-            X_val = np.swapaxes(X_val, 1, 2)  # [n_samples; seq_len; n_features]
-            X_test = np.swapaxes(X_test, 1, 2)  # [n_samples; seq_len; n_features]
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
@@ -137,17 +126,16 @@ class Experiment(IExperiment):
 
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project=f"experiment-{self._model}-{self._dataset}",
+            project=f"tune-milc-{self._dataset}",
             name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
         )
         # config dict for wandb
         wandb_config = {}
 
-        # setup experiment
-        self.num_epochs = self.max_epochs
+        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 30, self.max_epochs)
 
         # setup data
-        self.batch_size = 7  # arbitrary choice
+        self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
         self.datasets = {
             "train": DataLoader(
                 self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
@@ -157,199 +145,89 @@ class Experiment(IExperiment):
             ),
         }
 
-        # setup model
-        if self._model in ["mlp", "attention_mlp", "another_attention_mlp"]:
-            # # abide 869
-            # hidden_size = 173
-            # num_layers = 1
-            # dropout = 0.11134934868162844
+        feature_size = 256
+        no_downsample = True
+        fMRI_twoD = False
+        end_with_relu = False
+        method = "sub-lstm"
 
-            # # fbirn
-            # hidden_size = 40
-            # num_layers = 2
-            # dropout = 0.4181932705670766
+        encoder = NatureOneCNN(
+            self.data_shape[2],
+            feature_size,
+            no_downsample,
+            fMRI_twoD,
+            end_with_relu,
+            method,
+        )
 
-            # oasis
-            hidden_size = 36
-            num_layers = 0
-            dropout = 0.3194693116057663
-
-            if self._model == "mlp":
-                self.model = MLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                )
-            elif self._model == "attention_mlp":
-                self.model = AttentionMLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    time_length=self.data_shape[2],
-                    output_size=2,  # PRIOR
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                )
-            if self._model == "another_attention_mlp":
-                self.model = AnotherAttentionMLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    time_length=self.data_shape[2],
-                    output_size=2,  # PRIOR
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                )
-            wandb_config = {
-                "hidden_size": hidden_size,
-                "num_layers": num_layers,
-                "dropout": dropout,
-            }
-
-        elif self._model == "lstm":
-            hidden_size = self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True)
-            num_layers = self._trial.suggest_int("lstm.num_layers", 1, 4)
-            bidirectional = self._trial.suggest_categorical(
-                "lstm.bidirectional", [True, False]
-            )
-            fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.9)
-
-            self.model = LSTM(
-                input_size=self.data_shape[1],  # PRIOR
-                output_size=2,  # PRIOR
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                batch_first=True,
-                bidirectional=bidirectional,
-                fc_dropout=fc_dropout,
-            )
-            wandb_config = {
-                "hidden_size": hidden_size,
-                "num_layers": num_layers,
-                "bidirectional": bidirectional,
-                "fc_dropout": fc_dropout,
-            }
-
-        elif self._model == "transformer":
-            hidden_size = self._trial.suggest_int(
-                "transformer.hidden_size", 4, 128, log=True
-            )
-            num_heads = self._trial.suggest_int("transformer.num_heads", 1, 4)
-            num_layers = self._trial.suggest_int("transformer.num_layers", 1, 4)
-            fc_dropout = self._trial.suggest_uniform("transformer.fc_dropout", 0.1, 0.9)
-
-            self.model = Transformer(
-                input_size=self.data_shape[1],  # PRIOR
-                output_size=2,  # PRIOR
-                hidden_size=hidden_size * num_heads,
-                num_layers=num_layers,
-                num_heads=num_heads,
-                fc_dropout=fc_dropout,
-            )
-            wandb_config = {
-                "hidden_size": hidden_size,
-                "num_heads": num_heads,
-                "num_layers": num_layers,
-                "fc_dropout": fc_dropout,
-            }
-
-        elif self._model == "milc":
-            feature_size = 256
-            no_downsample = True
-            fMRI_twoD = False
-            end_with_relu = False
-            method = "sub-lstm"
-
-            encoder = NatureOneCNN(
-                self.data_shape[2],
-                feature_size,
-                no_downsample,
-                fMRI_twoD,
-                end_with_relu,
-                method,
-            )
-
-            if torch.cuda.is_available():
-                cudaID = str(torch.cuda.current_device())
-                device = torch.device("cuda:" + cudaID)
-                # device = torch.device("cuda:" + str(args.cuda_id))
-            else:
-                device = torch.device("cpu")
-
-            lstm_size = 200
-            lstm_layers = 1
-            ID = 4
-            gain = [0.05, 0.05, 0.05, 0.05, 0.05]
-            current_gain = gain[ID]
-
-            lstm_model = subjLSTM(
-                device,
-                feature_size,
-                lstm_size,
-                num_layers=lstm_layers,
-                freeze_embeddings=True,
-                gain=current_gain,
-            )
-
-            # path = ASSETS_ROOT.joinpath("pretrained_encoder/encoder.pt")
-            # model_dict = torch.load(path, map_location=device)
-
-            pre_training = "milc"
-            exp = "UFPT"
-            oldpath = ASSETS_ROOT.joinpath("pretrained_encoder")
-            self.model = combinedModel(
-                encoder,
-                lstm_model,
-                gain=current_gain,
-                PT=pre_training,
-                exp=exp,
-                device=device,
-                oldpath=oldpath,
-            )
-
+        if torch.cuda.is_available():
+            cudaID = str(torch.cuda.current_device())
+            device = torch.device("cuda:" + cudaID)
+            # device = torch.device("cuda:" + str(args.cuda_id))
         else:
-            raise NotImplementedError()
+            device = torch.device("cpu")
+
+        lstm_size = 200
+        lstm_layers = 1
+        ID = 4
+        gain = [0.05, 0.05, 0.05, 0.05, 0.05]
+        current_gain = gain[ID]
+
+        lstm_model = subjLSTM(
+            device,
+            feature_size,
+            lstm_size,
+            num_layers=lstm_layers,
+            freeze_embeddings=True,
+            gain=current_gain,
+        )
+
+        # path = ASSETS_ROOT.joinpath("pretrained_encoder/encoder.pt")
+        # model_dict = torch.load(path, map_location=device)
+
+        pre_training = "milc"
+        exp = "UFPT"
+        oldpath = ASSETS_ROOT.joinpath("pretrained_encoder")
+        self.model = combinedModel(
+            encoder,
+            lstm_model,
+            gain=current_gain,
+            PT=pre_training,
+            exp=exp,
+            device=device,
+            oldpath=oldpath,
+        )
 
         self.criterion = nn.CrossEntropyLoss()
 
-        if self._model == "milc":
-            lr = 0.0003
+        lr = 0.0003
 
-            if exp in ["UFPT", "NPT"]:
+        if exp in ["UFPT", "NPT"]:
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr, eps=1e-5)
+        else:
+            if pre_training in ["milc", "two-loss-milc"]:
                 self.optimizer = torch.optim.Adam(
-                    self.model.parameters(), lr=lr, eps=1e-5
+                    list(self.model.decoder.parameters()),
+                    lr=lr,
+                    eps=1e-5,
                 )
             else:
-                if pre_training in ["milc", "two-loss-milc"]:
-                    self.optimizer = torch.optim.Adam(
-                        list(self.model.decoder.parameters()),
-                        lr=lr,
-                        eps=1e-5,
-                    )
-                else:
-                    self.optimizer = torch.optim.Adam(
-                        list(self.model.decoder.parameters())
-                        + list(self.model.attn.parameters())
-                        + list(self.model.lstm.parameters()),
-                        lr=lr,
-                        eps=1e-5,
-                    )
-            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                self.optimizer, mode="min"
-            )
-        else:
-            lr = 0.000275501544945563
-            self.optimizer = optim.Adam(
-                self.model.parameters(),
-                lr=lr,
-            )
-            wandb_config["lr"] = lr
+                self.optimizer = torch.optim.Adam(
+                    list(self.model.decoder.parameters())
+                    + list(self.model.attn.parameters())
+                    + list(self.model.lstm.parameters()),
+                    lr=lr,
+                    eps=1e-5,
+                )
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode="min"
+        )
 
         # setup callbacks
         self.callbacks = {
             "early-stop": EarlyStoppingCallback(
                 minimize=True,
-                patience=16,
+                patience=30,
                 dataset_key="valid",
                 metric_key="loss",
                 min_delta=0.001,
@@ -375,7 +253,7 @@ class Experiment(IExperiment):
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
-                logits, _ = self.model(data)
+                logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
 
@@ -391,6 +269,7 @@ class Experiment(IExperiment):
         y_test = np.hstack(all_targets)
         y_score = np.vstack(all_scores)
         y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
+
         report = get_classification_report(
             y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
         )
@@ -401,6 +280,7 @@ class Experiment(IExperiment):
                     self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
 
         self.dataset_metrics = {
+            "accuracy": report["precision"].loc["accuracy"],
             "score": report["auc"].loc["weighted"],
             "loss": total_loss,
         }
@@ -409,8 +289,10 @@ class Experiment(IExperiment):
         super().on_epoch_end(self)
         self.wandb_logger.log(
             {
+                "train_accuracy": self.epoch_metrics["train"]["accuracy"],
                 "train_score": self.epoch_metrics["train"]["score"],
                 "train_loss": self.epoch_metrics["train"]["loss"],
+                "valid_accuracy": self.epoch_metrics["valid"]["accuracy"],
                 "valid_score": self.epoch_metrics["valid"]["score"],
                 "valid_loss": self.epoch_metrics["valid"]["loss"],
             },
@@ -429,8 +311,7 @@ class Experiment(IExperiment):
         self.model.train(False)
         self.model.zero_grad()
 
-        # all_scores, all_targets, all_raw_scores = [], [], []
-        all_scores, all_targets, all_raw_logits = [], [], []
+        all_scores, all_targets, all_raw_scores = [], [], []
         total_loss = 0.0
 
         with torch.set_grad_enabled(False):
@@ -445,9 +326,8 @@ class Experiment(IExperiment):
                 total_loss += loss.sum().item()
 
                 # prepare raw scores (score[number_of_time_slices] for each subject)
-                # raw_scores = torch.softmax(raw_logits, dim=-1)
-                # all_raw_scores.append(raw_scores.cpu().detach().numpy())
-                all_raw_logits.append(raw_logits.cpu().detach().numpy())
+                raw_scores = torch.softmax(raw_logits, dim=-1)
+                all_raw_scores.append(raw_scores.cpu().detach().numpy())
 
         total_loss /= self.dataset_batch_step
 
@@ -474,33 +354,18 @@ class Experiment(IExperiment):
             },
         )
 
-        # # raw scores for logistic regression
-        # all_targets = np.concatenate(all_targets, axis=0)
-        # all_raw_scores = np.concatenate(all_raw_scores, axis=0)
-        # all_mean_scores = np.mean(all_raw_scores, axis=1)
-        # print("all_targets.shape: ", all_targets.shape)
-        # print("all_raw_scores.shape: ", all_raw_scores.shape)
-        # print("all_mean_scores.shape: ", all_mean_scores.shape)
-
-        # np.savez(
-        #     f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/scores.npz",
-        #     raw_scores=all_raw_scores,
-        #     mean_scores=all_mean_scores,
-        #     targets=all_targets,
-        # )
-
-        # raw logits for logistic regression
+        # raw scores for logistic regression
         all_targets = np.concatenate(all_targets, axis=0)
-        all_raw_logits = np.concatenate(all_raw_logits, axis=0)
-        all_mean_logits = np.mean(all_raw_logits, axis=1)
+        all_raw_scores = np.concatenate(all_raw_scores, axis=0)
+        all_mean_scores = np.mean(all_raw_scores, axis=1)
         print("all_targets.shape: ", all_targets.shape)
-        print("all_raw_scores.shape: ", all_raw_logits.shape)
-        print("all_mean_scores.shape: ", all_mean_logits.shape)
+        print("all_raw_scores.shape: ", all_raw_scores.shape)
+        print("all_mean_scores.shape: ", all_mean_scores.shape)
 
         np.savez(
-            f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/scores.npz",
-            raw_scores=all_raw_logits,
-            mean_scores=all_mean_logits,
+            f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/test_scores.npz",
+            raw_scores=all_raw_scores,
+            mean_scores=all_mean_scores,
             targets=all_targets,
         )
 
@@ -535,19 +400,6 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--model",
-        type=str,
-        choices=[
-            "mlp",
-            "attention_mlp",
-            "another_attention_mlp",
-            "lstm",
-            "transformer",
-            "milc",
-        ],
-        required=True,
-    )
-    parser.add_argument(
         "--ds",
         type=str,
         choices=["oasis", "abide", "fbirn", "cobre", "abide_869", "ukb"],
@@ -560,10 +412,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     Experiment(
-        model=args.model,
         dataset=args.ds,
         quantile=args.quantile,
         n_splits=args.num_splits,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-experiment-{args.model}-{args.ds}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-tune-{args.model}-{args.ds}/",
     ).tune(n_trials=args.num_trials)

@@ -27,8 +27,14 @@ from src.ts_data import (
     load_UKB,
     TSQuantileTransformer,
 )
-from src.ts_model import LSTM, MLP, Transformer, AttentionMLP, AnotherAttentionMLP
-from src.ts_MILC import combinedModel, NatureOneCNN, subjLSTM
+from src.ts_model import (
+    LSTM,
+    MLP,
+    Transformer,
+    AttentionMLP,
+    AnotherAttentionMLP,
+    EnsembleLogisticRegression,
+)
 
 
 class Experiment(IExperiment):
@@ -67,33 +73,6 @@ class Experiment(IExperiment):
 
         self.data_shape = features.shape
 
-        if self._model == "milc":
-            # MILC encoder is trained for this data shape (needs check or encoder retraining)
-            if self._dataset == "oasis":
-                features = features[:, :, :140]
-                self.data_shape = features.shape
-
-            sample_x = self.data_shape[1]
-            sample_y = 20
-            samples_per_subject = 13
-            window_shift = 10
-
-            # reshape initial data into [num_of_subjects, samples_per_subject, sample_x, sample_y]
-            # there will be a window_shift overlap in 4th (sample_y) dimension
-            finalData = np.zeros(
-                (self.data_shape[0], samples_per_subject, sample_x, sample_y)
-            )
-            for i in range(self.data_shape[0]):
-                for j in range(samples_per_subject):
-                    # print(
-                    #     f"finalData[{i}, {j}, :, :] = features [{i}, :, {(j * window_shift)} : {(j * window_shift) + sample_y}]"
-                    # )
-                    finalData[i, j, :, :] = features[
-                        i, :, (j * window_shift) : (j * window_shift) + sample_y
-                    ]
-            features = torch.from_numpy(finalData).float()
-            self.data_shape = features.shape
-
         print("data shape: ", self.data_shape)
         skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
         skf.get_n_splits(features, labels)
@@ -111,10 +90,9 @@ class Experiment(IExperiment):
             stratify=y_train,
         )
 
-        if self._model != "milc":
-            X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
-            X_val = np.swapaxes(X_val, 1, 2)  # [n_samples; seq_len; n_features]
-            X_test = np.swapaxes(X_test, 1, 2)  # [n_samples; seq_len; n_features]
+        X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
+        X_val = np.swapaxes(X_val, 1, 2)  # [n_samples; seq_len; n_features]
+        X_test = np.swapaxes(X_test, 1, 2)  # [n_samples; seq_len; n_features]
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
@@ -241,58 +219,10 @@ class Experiment(IExperiment):
                 "fc_dropout": fc_dropout,
             }
 
-        elif self._model == "milc":
-            feature_size = 256
-            no_downsample = True
-            fMRI_twoD = False
-            end_with_relu = False
-            method = "sub-lstm"
-
-            encoder = NatureOneCNN(
-                self.data_shape[2],
-                feature_size,
-                no_downsample,
-                fMRI_twoD,
-                end_with_relu,
-                method,
-            )
-
-            if torch.cuda.is_available():
-                cudaID = str(torch.cuda.current_device())
-                device = torch.device("cuda:" + cudaID)
-                # device = torch.device("cuda:" + str(args.cuda_id))
-            else:
-                device = torch.device("cpu")
-
-            lstm_size = 200
-            lstm_layers = 1
-            ID = 4
-            gain = [0.05, 0.05, 0.05, 0.05, 0.05]
-            current_gain = gain[ID]
-
-            lstm_model = subjLSTM(
-                device,
-                feature_size,
-                lstm_size,
-                num_layers=lstm_layers,
-                freeze_embeddings=True,
-                gain=current_gain,
-            )
-
-            # path = ASSETS_ROOT.joinpath("pretrained_encoder/encoder.pt")
-            # model_dict = torch.load(path, map_location=device)
-
-            pre_training = "milc"
-            exp = "UFPT"
-            oldpath = ASSETS_ROOT.joinpath("pretrained_encoder")
-            self.model = combinedModel(
-                encoder,
-                lstm_model,
-                gain=current_gain,
-                PT=pre_training,
-                exp=exp,
-                device=device,
-                oldpath=oldpath,
+        elif self._model == "ens_lr":
+            self.model = EnsembleLogisticRegression(
+                input_size=self.data_shape[1],  # PRIOR
+                output_size=2,  # PRIOR
             )
 
         else:
@@ -300,38 +230,12 @@ class Experiment(IExperiment):
 
         self.criterion = nn.CrossEntropyLoss()
 
-        if self._model == "milc":
-            lr = 0.0003
-
-            if exp in ["UFPT", "NPT"]:
-                self.optimizer = torch.optim.Adam(
-                    self.model.parameters(), lr=lr, eps=1e-5
-                )
-            else:
-                if pre_training in ["milc", "two-loss-milc"]:
-                    self.optimizer = torch.optim.Adam(
-                        list(self.model.decoder.parameters()),
-                        lr=lr,
-                        eps=1e-5,
-                    )
-                else:
-                    self.optimizer = torch.optim.Adam(
-                        list(self.model.decoder.parameters())
-                        + list(self.model.attn.parameters())
-                        + list(self.model.lstm.parameters()),
-                        lr=lr,
-                        eps=1e-5,
-                    )
-            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                self.optimizer, mode="min"
-            )
-        else:
-            lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
-            self.optimizer = optim.Adam(
-                self.model.parameters(),
-                lr=lr,
-            )
-            wandb_config["lr"] = lr
+        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+        self.optimizer = optim.Adam(
+            self.model.parameters(),
+            lr=lr,
+        )
+        wandb_config["lr"] = lr
 
         # setup callbacks
         self.callbacks = {
@@ -363,7 +267,7 @@ class Experiment(IExperiment):
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
-                logits, _ = self.model(data)
+                logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
 
@@ -421,23 +325,20 @@ class Experiment(IExperiment):
         self.model.train(False)
         self.model.zero_grad()
 
-        all_scores, all_targets, all_raw_scores = [], [], []
+        all_scores, all_targets, all_logits = [], [], []
         total_loss = 0.0
 
         with torch.set_grad_enabled(False):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(test_ds)):
                 self.optimizer.zero_grad()
-                logits, raw_logits = self.model(data)
+                logits = self.model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
+                all_logits.append(logits.cpu().detach().numpy())
                 total_loss += loss.sum().item()
-
-                # prepare raw scores (score[number_of_time_slices] for each subject)
-                raw_scores = torch.softmax(raw_logits, dim=-1)
-                all_raw_scores.append(raw_scores.cpu().detach().numpy())
 
         total_loss /= self.dataset_batch_step
 
@@ -464,18 +365,13 @@ class Experiment(IExperiment):
             },
         )
 
-        # raw scores for logistic regression
+        # logits for logistic regression
         all_targets = np.concatenate(all_targets, axis=0)
-        all_raw_scores = np.concatenate(all_raw_scores, axis=0)
-        all_mean_scores = np.mean(all_raw_scores, axis=1)
-        print("all_targets.shape: ", all_targets.shape)
-        print("all_raw_scores.shape: ", all_raw_scores.shape)
-        print("all_mean_scores.shape: ", all_mean_scores.shape)
+        all_logits = np.concatenate(all_logits, axis=0)
 
         np.savez(
             f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/test_scores.npz",
-            raw_scores=all_raw_scores,
-            mean_scores=all_mean_scores,
+            logits=all_logits,
             targets=all_targets,
         )
 
@@ -498,7 +394,7 @@ class Experiment(IExperiment):
             self.k = k
             self.study = optuna.create_study(direction="maximize")
             self.study.optimize(self._objective, n_trials=n_trials, n_jobs=1)
-            logfile = f"{self.logdir}/optuna.csv"
+            logfile = f"{self.logdir}/optuna_{k}.csv"
             df = self.study.trials_dataframe()
             df.to_csv(logfile, index=False)
 
@@ -518,7 +414,7 @@ if __name__ == "__main__":
             "another_attention_mlp",
             "lstm",
             "transformer",
-            "milc",
+            "ens_lr",
         ],
         required=True,
     )
