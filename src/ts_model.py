@@ -299,5 +299,5 @@ class EnsembleLogisticRegression(nn.Module):
 
         output = self.linear(x.view(-1, fs))
         output = output.view(bs, ln, -1)
-        logits = output.mean(1)
+        logits = output.mean(1).squeeze()
         return logits

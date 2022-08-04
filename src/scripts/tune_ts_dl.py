@@ -228,7 +228,12 @@ class Experiment(IExperiment):
         else:
             raise NotImplementedError()
 
-        self.criterion = nn.CrossEntropyLoss()
+        if self._model == "ens_lr":
+            self.criterion = nn.BCEWithLogitsLoss()
+        elif self._model == "ens_svm":
+            pass
+        else:
+            self.criterion = nn.CrossEntropyLoss()
 
         lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
         self.optimizer = optim.Adam(

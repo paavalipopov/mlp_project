@@ -239,13 +239,18 @@ class Experiment(IExperiment):
         elif self._model == "ens_lr":
             self.model = EnsembleLogisticRegression(
                 input_size=self.data_shape[1],  # PRIOR
-                output_size=2,  # PRIOR
+                output_size=1,  # PRIOR
             )
 
         else:
             raise NotImplementedError()
 
-        self.criterion = nn.CrossEntropyLoss()
+        if self._model == "ens_lr":
+            self.criterion = nn.BCEWithLogitsLoss()
+        elif self._model == "ens_svm":
+            pass
+        else:
+            self.criterion = nn.CrossEntropyLoss()
 
         lr = 0.000275501544945563
         self.optimizer = optim.Adam(
@@ -285,8 +290,11 @@ class Experiment(IExperiment):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
                 logits = self.model(data)
-                loss = self.criterion(logits, target)
-                score = torch.softmax(logits, dim=-1)
+                loss = self.criterion(logits, target.float())
+                if self._model == "ens_lr":
+                    score = torch.sigmoid(logits)
+                else:
+                    score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
@@ -298,8 +306,14 @@ class Experiment(IExperiment):
         total_loss /= self.dataset_batch_step
 
         y_test = np.hstack(all_targets)
-        y_score = np.vstack(all_scores)
-        y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
+
+        if self._model == "ens_lr":
+            y_score = np.hstack(all_scores)
+            y_pred = np.array(y_score > 0.5).astype(np.int32)
+        else:
+            y_score = np.vstack(all_scores)
+            y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
+
         report = get_classification_report(
             y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
         )
@@ -345,8 +359,11 @@ class Experiment(IExperiment):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(test_ds)):
                 self.optimizer.zero_grad()
                 logits = self.model(data)
-                loss = self.criterion(logits, target)
-                score = torch.softmax(logits, dim=-1)
+                loss = self.criterion(logits, target.float())
+                if self._model == "ens_lr":
+                    score = torch.sigmoid(logits)
+                else:
+                    score = torch.softmax(logits, dim=-1)
 
                 all_scores.append(score.cpu().detach().numpy())
                 all_targets.append(target.cpu().detach().numpy())
@@ -356,8 +373,14 @@ class Experiment(IExperiment):
         total_loss /= self.dataset_batch_step
 
         y_test = np.hstack(all_targets)
-        y_score = np.vstack(all_scores)
-        y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
+
+        if self._model == "ens_lr":
+            y_score = np.hstack(all_scores)
+            y_pred = np.array(y_score > 0.5).astype(np.int32)
+        else:
+            y_score = np.vstack(all_scores)
+            y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
+
         report = get_classification_report(
             y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
         )
