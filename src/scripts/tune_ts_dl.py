@@ -33,7 +33,15 @@ from src.ts_model import (
     Transformer,
     AttentionMLP,
     AnotherAttentionMLP,
+    MyLogisticRegression,
     EnsembleLogisticRegression,
+    AnotherEnsembleLogisticRegression,
+    MySVM,
+    EnsembleSVM,
+    SVMLoss,
+    No_Res_MLP,
+    No_Ens_MLP,
+    Transposed_MLP,
 )
 
 
@@ -135,9 +143,18 @@ class Experiment(IExperiment):
         }
 
         # setup model
-        if self._model in ["mlp", "attention_mlp", "another_attention_mlp"]:
-            hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
+        if self._model in [
+            "mlp",
+            "attention_mlp",
+            "another_attention_mlp",
+            "nores_mlp",
+            "noens_mlp",
+            "trans_mlp",
+        ]:
+            hidden_size = self._trial.suggest_int("mlp.hidden_size", 256, 1024, log=True)
             num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
+            # hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
+            # num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
             dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
 
             if self._model == "mlp":
@@ -161,6 +178,30 @@ class Experiment(IExperiment):
                 self.model = AnotherAttentionMLP(
                     input_size=self.data_shape[1],  # PRIOR
                     time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    dropout=dropout,
+                )
+            if self._model == "nores_mlp":
+                self.model = No_Res_MLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    dropout=dropout,
+                )
+            if self._model == "noens_mlp":
+                self.model = No_Ens_MLP(
+                    input_size=self.data_shape[1] * self.data_shape[2],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    dropout=dropout,
+                )
+            if self._model == "trans_mlp":
+                self.model = Transposed_MLP(
+                    input_size=self.data_shape[2],  # PRIOR
                     output_size=2,  # PRIOR
                     hidden_size=hidden_size,
                     num_layers=num_layers,
@@ -417,9 +458,16 @@ if __name__ == "__main__":
             "mlp",
             "attention_mlp",
             "another_attention_mlp",
+            "nores_mlp",
+            "noens_mlp",
+            "trans_mlp",
             "lstm",
             "transformer",
+            "my_lr",
             "ens_lr",
+            "another_ens_lr",
+            "my_svm",
+            "ens_svm",
         ],
         required=True,
     )

@@ -17,6 +17,12 @@ from animus import EarlyStoppingCallback, IExperiment
 from animus.torch.callbacks import TorchCheckpointerCallback
 import wandb
 
+from sklearn.metrics import (
+    accuracy_score,
+    precision_recall_fscore_support,
+    roc_auc_score,
+)
+
 from src.settings import LOGS_ROOT, ASSETS_ROOT, UTCNOW
 from src.ts_data import (
     load_ABIDE1,
@@ -33,7 +39,15 @@ from src.ts_model import (
     Transformer,
     AttentionMLP,
     AnotherAttentionMLP,
+    MyLogisticRegression,
     EnsembleLogisticRegression,
+    AnotherEnsembleLogisticRegression,
+    MySVM,
+    EnsembleSVM,
+    SVMLoss,
+    No_Res_MLP,
+    No_Ens_MLP,
+    Transposed_MLP,
 )
 
 
@@ -72,6 +86,17 @@ class Experiment(IExperiment):
             features, labels = load_UKB()
 
         self.data_shape = features.shape
+
+        if self._model in ["my_svm", "ens_svm"]:
+            new_labels = np.zeros(labels.shape)
+
+            for i in range(labels.shape[0]):
+                if labels[i] == 0:
+                    new_labels[i] = -1
+                elif labels[i] == 1:
+                    new_labels[i] = 1
+
+            labels = new_labels
 
         print("data shape: ", self.data_shape)
         skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
@@ -136,7 +161,14 @@ class Experiment(IExperiment):
         }
 
         # setup model
-        if self._model in ["mlp", "attention_mlp", "another_attention_mlp"]:
+        if self._model in [
+            "mlp",
+            "attention_mlp",
+            "another_attention_mlp",
+            "nores_mlp",
+            "noens_mlp",
+            "trans_mlp",
+        ]:
             # # abide 869
             # hidden_size = 173
             # num_layers = 1
@@ -147,15 +179,30 @@ class Experiment(IExperiment):
             # num_layers = 2
             # dropout = 0.4181932705670766
 
-            # oasis
-            hidden_size = 36
-            num_layers = 0
-            dropout = 0.3194693116057663
+            # # oasis
+            # hidden_size = 36
+            # num_layers = 0
+            # dropout = 0.3194693116057663
 
             # # ukb
             # hidden_size = 50
             # num_layers = 1
             # dropout = 0.55
+
+            # # fbirn for nores mlp
+            # hidden_size = 76
+            # num_layers = 3
+            # dropout = 0.17378202473378818
+
+            # # fbirn for trans mlp
+            # hidden_size = 84
+            # num_layers = 2
+            # dropout = 0.24062633598409847
+
+            # fbirn for noens mlp
+            hidden_size = 552
+            num_layers = 2
+            dropout = 0.17774924153871324
 
             if self._model == "mlp":
                 self.model = MLP(
@@ -178,6 +225,30 @@ class Experiment(IExperiment):
                 self.model = AnotherAttentionMLP(
                     input_size=self.data_shape[1],  # PRIOR
                     time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    dropout=dropout,
+                )
+            if self._model == "nores_mlp":
+                self.model = No_Res_MLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    dropout=dropout,
+                )
+            if self._model == "noens_mlp":
+                self.model = No_Ens_MLP(
+                    input_size=self.data_shape[1] * self.data_shape[2],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    dropout=dropout,
+                )
+            if self._model == "trans_mlp":
+                self.model = Transposed_MLP(
+                    input_size=self.data_shape[2],  # PRIOR
                     output_size=2,  # PRIOR
                     hidden_size=hidden_size,
                     num_layers=num_layers,
@@ -236,8 +307,32 @@ class Experiment(IExperiment):
                 "fc_dropout": fc_dropout,
             }
 
+        elif self._model == "my_lr":
+            self.model = MyLogisticRegression(
+                input_size=self.data_shape[1] * self.data_shape[2],  # PRIOR
+                output_size=1,  # PRIOR
+            )
+
         elif self._model == "ens_lr":
             self.model = EnsembleLogisticRegression(
+                input_size=self.data_shape[1],  # PRIOR
+                output_size=1,  # PRIOR
+            )
+
+        elif self._model == "another_ens_lr":
+            self.model = AnotherEnsembleLogisticRegression(
+                input_size=self.data_shape[1],  # PRIOR
+                output_size=1,  # PRIOR
+            )
+
+        elif self._model == "my_svm":
+            self.model = MySVM(
+                input_size=self.data_shape[1] * self.data_shape[2],  # PRIOR
+                output_size=1,  # PRIOR
+            )
+
+        elif self._model == "ens_svm":
+            self.model = EnsembleSVM(
                 input_size=self.data_shape[1],  # PRIOR
                 output_size=1,  # PRIOR
             )
@@ -245,14 +340,18 @@ class Experiment(IExperiment):
         else:
             raise NotImplementedError()
 
-        if self._model == "ens_lr":
+        if self._model in ["my_lr", "ens_lr"]:
             self.criterion = nn.BCEWithLogitsLoss()
-        elif self._model == "ens_svm":
-            pass
+        elif self._model == "another_ens_lr":
+            self.criterion = nn.BCELoss()
+
+        elif self._model in ["my_svm", "ens_svm"]:
+            self.criterion = nn.SoftMarginLoss()
+
         else:
             self.criterion = nn.CrossEntropyLoss()
 
-        lr = 0.000275501544945563
+        lr = 0.00004417285758637688
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=lr,
@@ -290,9 +389,11 @@ class Experiment(IExperiment):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
                 logits = self.model(data)
-                loss = self.criterion(logits, target.float())
-                if self._model == "ens_lr":
+                loss = self.criterion(logits, target)
+                if self._model in ["my_lr", "ens_lr"]:
                     score = torch.sigmoid(logits)
+                if self._model in ["another_ens_lr", "my_svm", "ens_svm"]:
+                    score = logits
                 else:
                     score = torch.softmax(logits, dim=-1)
 
@@ -307,9 +408,21 @@ class Experiment(IExperiment):
 
         y_test = np.hstack(all_targets)
 
-        if self._model == "ens_lr":
+        if self._model in ["my_lr", "ens_lr", "another_ens_lr"]:
             y_score = np.hstack(all_scores)
             y_pred = np.array(y_score > 0.5).astype(np.int32)
+        elif self._model in ["my_svm", "ens_svm"]:
+            y_score = np.hstack(all_scores)
+
+            y_pred = np.zeros(y_score.shape[0])
+            for i in range(y_score.shape[0]):
+                if y_score[i] < 0:
+                    y_pred[i] = -1
+                elif y_score[i] > 0:
+                    y_pred[i] = 1
+
+            y_score = (y_score - np.min(y_score)) / (np.max(y_score) - np.min(y_score))
+
         else:
             y_score = np.vstack(all_scores)
             y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
@@ -327,6 +440,12 @@ class Experiment(IExperiment):
             "score": report["auc"].loc["weighted"],
             "loss": total_loss,
         }
+
+        # accuracy = accuracy_score(y_true=y_test, y_pred=y_pred)
+        # self.dataset_metrics = {
+        #     "score": accuracy,
+        #     "loss": total_loss,
+        # }
 
     def on_epoch_end(self, exp: "IExperiment") -> None:
         super().on_epoch_end(self)
@@ -359,9 +478,11 @@ class Experiment(IExperiment):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(test_ds)):
                 self.optimizer.zero_grad()
                 logits = self.model(data)
-                loss = self.criterion(logits, target.float())
-                if self._model == "ens_lr":
+                loss = self.criterion(logits, target)
+                if self._model in ["my_lr", "ens_lr"]:
                     score = torch.sigmoid(logits)
+                if self._model in ["another_ens_lr", "my_svm", "ens_svm"]:
+                    score = logits
                 else:
                     score = torch.softmax(logits, dim=-1)
 
@@ -374,9 +495,21 @@ class Experiment(IExperiment):
 
         y_test = np.hstack(all_targets)
 
-        if self._model == "ens_lr":
+        if self._model in ["my_lr", "ens_lr", "another_ens_lr"]:
             y_score = np.hstack(all_scores)
             y_pred = np.array(y_score > 0.5).astype(np.int32)
+        elif self._model in ["my_svm", "ens_svm"]:
+            y_score = np.hstack(all_scores)
+
+            y_pred = np.zeros(y_score.shape[0])
+            for i in range(y_score.shape[0]):
+                if y_score[i] < 0:
+                    y_pred[i] = -1
+                elif y_score[i] > 0:
+                    y_pred[i] = 1
+
+            y_score = (y_score - np.min(y_score)) / (np.max(y_score) - np.min(y_score))
+
         else:
             y_score = np.vstack(all_scores)
             y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
@@ -400,6 +533,19 @@ class Experiment(IExperiment):
                 "test_loss": total_loss,
             },
         )
+
+        # accuracy = accuracy_score(y_true=y_test, y_pred=y_pred)
+        # self.dataset_metrics = {
+        #     "score": accuracy,
+        #     "loss": total_loss,
+        # }
+        # self.wandb_logger.log(
+        #     {
+        #         "test_accuracy": accuracy,
+        #         "test_score": 0,
+        #         "test_loss": total_loss,
+        #     },
+        # )
 
         # logits for logistic regression
         all_targets = np.concatenate(all_targets, axis=0)
@@ -448,9 +594,16 @@ if __name__ == "__main__":
             "mlp",
             "attention_mlp",
             "another_attention_mlp",
+            "nores_mlp",
+            "noens_mlp",
+            "trans_mlp",
             "lstm",
             "transformer",
+            "my_lr",
             "ens_lr",
+            "another_ens_lr",
+            "my_svm",
+            "ens_svm",
         ],
         required=True,
     )

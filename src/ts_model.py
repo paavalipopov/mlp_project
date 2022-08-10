@@ -62,6 +62,147 @@ class MLP(nn.Module):
         return logits
 
 
+class No_Res_MLP(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        dropout: float = 0.5,
+        hidden_size: int = 128,
+        num_layers: int = 0,
+    ):
+        super(No_Res_MLP, self).__init__()
+        layers = [
+            nn.LayerNorm(input_size),
+            nn.Dropout(p=dropout),
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+        ]
+        for _ in range(num_layers):
+            layers.append(
+                nn.Sequential(
+                    nn.LayerNorm(hidden_size),
+                    nn.Dropout(p=dropout),
+                    nn.Linear(hidden_size, hidden_size),
+                    nn.ReLU(),
+                )
+            )
+        layers.append(
+            nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Dropout(p=dropout),
+                nn.Linear(hidden_size, output_size),
+            )
+        )
+
+        self.fc = nn.Sequential(*layers)
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
+        fc_output = self.fc(x.view(-1, fs))
+        fc_output = fc_output.view(bs, ln, -1)
+        logits = fc_output.mean(1)
+        return logits
+
+
+class No_Ens_MLP(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        dropout: float = 0.5,
+        hidden_size: int = 128,
+        num_layers: int = 0,
+    ):
+        super(No_Ens_MLP, self).__init__()
+        layers = [
+            nn.LayerNorm(input_size),
+            nn.Dropout(p=dropout),
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+        ]
+        for _ in range(num_layers):
+            layers.append(
+                ResidualBlock(
+                    nn.Sequential(
+                        nn.LayerNorm(hidden_size),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(hidden_size, hidden_size),
+                        nn.ReLU(),
+                    )
+                )
+            )
+        layers.append(
+            nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Dropout(p=dropout),
+                nn.Linear(hidden_size, output_size),
+            )
+        )
+
+        self.fc = nn.Sequential(*layers)
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
+        fc_output = self.fc(x.view(bs, -1))
+        return fc_output
+
+
+class Transposed_MLP(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        dropout: float = 0.5,
+        hidden_size: int = 128,
+        num_layers: int = 0,
+    ):
+        super(Transposed_MLP, self).__init__()
+        layers = [
+            nn.LayerNorm(input_size),
+            nn.Dropout(p=dropout),
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+        ]
+        for _ in range(num_layers):
+            layers.append(
+                ResidualBlock(
+                    nn.Sequential(
+                        nn.LayerNorm(hidden_size),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(hidden_size, hidden_size),
+                        nn.ReLU(),
+                    )
+                )
+            )
+        layers.append(
+            nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Dropout(p=dropout),
+                nn.Linear(hidden_size, output_size),
+            )
+        )
+
+        self.fc = nn.Sequential(*layers)
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        fc_input = x.swapaxes(1, 2)
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
+        fc_output = self.fc(fc_input.reshape(-1, ln))
+        fc_output = fc_output.view(bs, fs, -1)
+        logits = fc_output.mean(1)
+        return logits
+
+
 class LSTM(nn.Module):
     def __init__(
         self,
@@ -286,9 +427,74 @@ class AnotherAttentionMLP(nn.Module):
         return logits
 
 
+class MyLogisticRegression(nn.Module):
+    def __init__(self, input_size: int, output_size: int):
+        super(MyLogisticRegression, self).__init__()
+        self.linear = torch.nn.Linear(input_size, output_size)
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
+
+        logits = self.linear(x.view(bs, -1)).squeeze()
+        return logits
+
+
 class EnsembleLogisticRegression(nn.Module):
     def __init__(self, input_size: int, output_size: int):
         super(EnsembleLogisticRegression, self).__init__()
+        self.linear = torch.nn.Linear(input_size, output_size)
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
+
+        output = self.linear(x.view(-1, fs))
+        output = output.view(bs, ln, -1)
+        logits = output.mean(1).squeeze()
+        return logits
+
+
+class AnotherEnsembleLogisticRegression(nn.Module):
+    def __init__(self, input_size: int, output_size: int):
+        super(AnotherEnsembleLogisticRegression, self).__init__()
+        self.linear = torch.nn.Linear(input_size, output_size)
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
+
+        output = self.linear(x.view(-1, fs))
+        output = output.view(bs, ln, -1)
+        scores = torch.sigmoid(output)
+        scores = scores.mean(1).squeeze()
+        return scores
+
+
+class MySVM(nn.Module):
+    def __init__(self, input_size: int, output_size: int):
+        super(MySVM, self).__init__()
+        self.linear = torch.nn.Linear(input_size, output_size)
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
+
+        logits = self.linear(x.view(bs, -1)).squeeze()
+        return logits
+
+
+class EnsembleSVM(nn.Module):
+    def __init__(self, input_size: int, output_size: int):
+        super(EnsembleSVM, self).__init__()
         self.linear = torch.nn.Linear(input_size, output_size)
 
     def forward(self, x):
