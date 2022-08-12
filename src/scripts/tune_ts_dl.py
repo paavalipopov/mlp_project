@@ -1,8 +1,11 @@
 # pylint: disable=W0201,W0223,C0103,C0115,C0116,R0902,E1101,R0914
 """Script for tuning different models on different datasets"""
+import os
+import csv
 import argparse
 import json
 
+import pandas as pd
 from apto.utils.misc import boolean_flag
 from apto.utils.report import get_classification_report
 import numpy as np
@@ -29,16 +32,16 @@ from src.ts_data import (
 )
 from src.ts_model import (
     LSTM,
+    AnotherLSTM,
     MLP,
     Transformer,
     AttentionMLP,
+    NewAttentionMLP,
     AnotherAttentionMLP,
-    MyLogisticRegression,
     EnsembleLogisticRegression,
     AnotherEnsembleLogisticRegression,
     MySVM,
     EnsembleSVM,
-    SVMLoss,
     No_Res_MLP,
     No_Ens_MLP,
     Transposed_MLP,
@@ -48,6 +51,7 @@ from src.ts_model import (
 class Experiment(IExperiment):
     def __init__(
         self,
+        mode: str,
         model: str,
         dataset: str,
         quantile: bool,
@@ -56,6 +60,8 @@ class Experiment(IExperiment):
         logdir: str,
     ) -> None:
         super().__init__()
+
+        self._mode = mode
         assert not quantile, "Not implemented yet"
         self._model = model
         self._dataset = dataset
@@ -115,6 +121,184 @@ class Experiment(IExperiment):
             torch.tensor(y_test, dtype=torch.int64),
         )
 
+    def get_model(self):
+        config = {}
+
+        if self._mode == "experiment":
+            config_file = ""
+            config_files = []
+            for logdir in os.listdir(LOGS_ROOT):
+                if logdir.endswith(f"tune-{args.model}-{args.ds}"):
+                    config_files.append(os.path.join(LOGS_ROOT, logdir, "runs.csv"))
+
+            config_file = sorted(config_files)[len(config_files) - 1]
+
+            df = pd.read_csv(config_file, delimiter=",")
+            config = df.loc[df["test_score"].idxmax()].to_dict()
+            print(config)
+
+            config.pop("test_score")
+            config.pop("test_accuracy")
+            config.pop("test_loss")
+
+        if self._mode == "tune":
+            config["num_epochs"] = self._trial.suggest_int(
+                "exp.num_epochs", 30, self.max_epochs
+            )
+            config["batch_size"] = self._trial.suggest_int(
+                "data.batch_size", 4, 32, log=True
+            )
+        else:
+            config["num_epochs"] = self.max_epochs
+            config["batch_size"] = int(config["batch_size"])
+
+        if self._model in [
+            "mlp",
+            "attention_mlp",
+            "another_attention_mlp",
+            "new_attention_mlp",
+            "nores_mlp",
+            "noens_mlp",
+            "trans_mlp",
+        ]:
+            if self._mode == "tune":
+                config["hidden_size"] = self._trial.suggest_int(
+                    "mlp.hidden_size", 32, 256, log=True
+                )
+                config["num_layers"] = self._trial.suggest_int("mlp.num_layers", 0, 4)
+                config["dropout"] = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
+                if self._model == "new_attention_mlp":
+                    config["attention_size"] = self._trial.suggest_int(
+                        "mlp.attention_size", 32, 256, log=True
+                    )
+
+            if self._model == "mlp":
+                model = MLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "attention_mlp":
+                model = AttentionMLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "another_attention_mlp":
+                model = AnotherAttentionMLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "new_attention_mlp":
+                model = NewAttentionMLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    attention_size=int(config["attention_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "nores_mlp":
+                model = No_Res_MLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "noens_mlp":
+                model = No_Ens_MLP(
+                    input_size=self.data_shape[1] * self.data_shape[2],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "trans_mlp":
+                model = Transposed_MLP(
+                    input_size=self.data_shape[2],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+
+        elif self._model in ["lstm", "another_lstm"]:
+            if self._mode == "tune":
+                config["hidden_size"] = self._trial.suggest_int(
+                    "lstm.hidden_size", 32, 256, log=True
+                )
+                config["num_layers"] = self._trial.suggest_int("lstm.num_layers", 1, 4)
+                config["bidirectional"] = self._trial.suggest_categorical(
+                    "lstm.bidirectional", [True, False]
+                )
+                config["fc_dropout"] = self._trial.suggest_uniform(
+                    "lstm.fc_dropout", 0.1, 0.9
+                )
+
+            if self._model == "lstm":
+                model = LSTM(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    batch_first=True,
+                    bidirectional=config["bidirectional"],
+                    fc_dropout=config["fc_dropout"],
+                )
+            elif self._model == "another_lstm":
+                model = AnotherLSTM(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    batch_first=True,
+                    bidirectional=False,
+                    fc_dropout=config["fc_dropout"],
+                )
+
+        elif self._model == "transformer":
+            if self._mode == "tune":
+                config["hidden_size"] = self._trial.suggest_int(
+                    "transformer.hidden_size", 4, 128, log=True
+                )
+                config["num_heads"] = self._trial.suggest_int(
+                    "transformer.num_heads", 1, 4
+                )
+                config["num_layers"] = self._trial.suggest_int(
+                    "transformer.num_layers", 1, 4
+                )
+                config["fc_dropout"] = self._trial.suggest_uniform(
+                    "transformer.fc_dropout", 0.1, 0.9
+                )
+
+            model = Transformer(
+                input_size=self.data_shape[1],  # PRIOR
+                output_size=2,  # PRIOR
+                hidden_size=int(config["hidden_size"]) * int(config["num_heads"]),
+                num_layers=int(config["num_layers"]),
+                num_heads=int(config["num_heads"]),
+                fc_dropout=config["fc_dropout"],
+            )
+
+        else:
+            raise NotImplementedError()
+
+        if self._mode == "tune":
+            config["lr"] = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+
+        return model, config
+
     def on_experiment_start(self, exp: "IExperiment"):
         super().on_experiment_start(exp)
 
@@ -123,165 +307,38 @@ class Experiment(IExperiment):
 
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
-            project=f"tune-{self._model}-{self._dataset}",
+            project=f"{UTCNOW}-{self._mode}-{self._model}-{self._dataset}",
             name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
+            save_code=True,
         )
-        # config dict for wandb
-        wandb_config = {}
 
-        self.num_epochs = self._trial.suggest_int("exp.num_epochs", 30, self.max_epochs)
+        # init model
+        self.model, self.config = self.get_model()
+        if self._mode == "tune":
+            self.config["link"] = self.wandb_logger.get_url()
 
-        # setup data
-        self.batch_size = self._trial.suggest_int("data.batch_size", 4, 32, log=True)
+        self.num_epochs = self.config["num_epochs"]
+
         self.datasets = {
             "train": DataLoader(
-                self._train_ds, batch_size=self.batch_size, num_workers=0, shuffle=True
+                self._train_ds,
+                batch_size=self.config["batch_size"],
+                num_workers=0,
+                shuffle=True,
             ),
             "valid": DataLoader(
-                self._valid_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
+                self._valid_ds,
+                batch_size=self.config["batch_size"],
+                num_workers=0,
+                shuffle=False,
             ),
         }
 
-        # setup model
-        if self._model in [
-            "mlp",
-            "attention_mlp",
-            "another_attention_mlp",
-            "nores_mlp",
-            "noens_mlp",
-            "trans_mlp",
-        ]:
-            hidden_size = self._trial.suggest_int("mlp.hidden_size", 256, 1024, log=True)
-            num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-            # hidden_size = self._trial.suggest_int("mlp.hidden_size", 32, 256, log=True)
-            # num_layers = self._trial.suggest_int("mlp.num_layers", 0, 4)
-            dropout = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
-
-            if self._model == "mlp":
-                self.model = MLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                )
-            elif self._model == "attention_mlp":
-                self.model = AttentionMLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    time_length=self.data_shape[2],
-                    output_size=2,  # PRIOR
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                )
-            if self._model == "another_attention_mlp":
-                self.model = AnotherAttentionMLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    time_length=self.data_shape[2],
-                    output_size=2,  # PRIOR
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                )
-            if self._model == "nores_mlp":
-                self.model = No_Res_MLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                )
-            if self._model == "noens_mlp":
-                self.model = No_Ens_MLP(
-                    input_size=self.data_shape[1] * self.data_shape[2],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                )
-            if self._model == "trans_mlp":
-                self.model = Transposed_MLP(
-                    input_size=self.data_shape[2],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=hidden_size,
-                    num_layers=num_layers,
-                    dropout=dropout,
-                )
-            wandb_config = {
-                "hidden_size": hidden_size,
-                "num_layers": num_layers,
-                "dropout": dropout,
-            }
-
-        elif self._model == "lstm":
-            hidden_size = self._trial.suggest_int("lstm.hidden_size", 32, 256, log=True)
-            num_layers = self._trial.suggest_int("lstm.num_layers", 1, 4)
-            bidirectional = self._trial.suggest_categorical(
-                "lstm.bidirectional", [True, False]
-            )
-            fc_dropout = self._trial.suggest_uniform("lstm.fc_dropout", 0.1, 0.9)
-
-            self.model = LSTM(
-                input_size=self.data_shape[1],  # PRIOR
-                output_size=2,  # PRIOR
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                batch_first=True,
-                bidirectional=bidirectional,
-                fc_dropout=fc_dropout,
-            )
-            wandb_config = {
-                "hidden_size": hidden_size,
-                "num_layers": num_layers,
-                "bidirectional": bidirectional,
-                "fc_dropout": fc_dropout,
-            }
-
-        elif self._model == "transformer":
-            hidden_size = self._trial.suggest_int(
-                "transformer.hidden_size", 4, 128, log=True
-            )
-            num_heads = self._trial.suggest_int("transformer.num_heads", 1, 4)
-            num_layers = self._trial.suggest_int("transformer.num_layers", 1, 4)
-            fc_dropout = self._trial.suggest_uniform("transformer.fc_dropout", 0.1, 0.9)
-
-            self.model = Transformer(
-                input_size=self.data_shape[1],  # PRIOR
-                output_size=2,  # PRIOR
-                hidden_size=hidden_size * num_heads,
-                num_layers=num_layers,
-                num_heads=num_heads,
-                fc_dropout=fc_dropout,
-            )
-            wandb_config = {
-                "hidden_size": hidden_size,
-                "num_heads": num_heads,
-                "num_layers": num_layers,
-                "fc_dropout": fc_dropout,
-            }
-
-        elif self._model == "ens_lr":
-            self.model = EnsembleLogisticRegression(
-                input_size=self.data_shape[1],  # PRIOR
-                output_size=2,  # PRIOR
-            )
-
-        else:
-            raise NotImplementedError()
-
-        if self._model == "ens_lr":
-            self.criterion = nn.BCEWithLogitsLoss()
-        elif self._model == "ens_svm":
-            pass
-        else:
-            self.criterion = nn.CrossEntropyLoss()
-
-        lr = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+        self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=lr,
+            lr=self.config["lr"],
         )
-        wandb_config["lr"] = lr
 
         # setup callbacks
         self.callbacks = {
@@ -301,9 +358,7 @@ class Experiment(IExperiment):
             ),
         }
 
-        wandb_config["num_epochs"] = self.num_epochs
-        wandb_config["batch_size"] = self.batch_size
-        self.wandb_logger.config.update(wandb_config)
+        self.wandb_logger.config.update(self.config)
 
     def run_dataset(self) -> None:
         all_scores, all_targets = [], []
@@ -361,7 +416,10 @@ class Experiment(IExperiment):
     def run_test_dataset(self) -> None:
 
         test_ds = DataLoader(
-            self._test_ds, batch_size=self.batch_size, num_workers=0, shuffle=False
+            self._test_ds,
+            batch_size=self.config["batch_size"],
+            num_workers=0,
+            shuffle=False,
         )
 
         f = open(f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/model.storage.json")
@@ -410,6 +468,9 @@ class Experiment(IExperiment):
                 "test_loss": total_loss,
             },
         )
+        self.config["test_accuracy"] = report["precision"].loc["accuracy"]
+        self.config["test_score"] = report["auc"].loc["weighted"]
+        self.config["test_loss"] = total_loss
 
         # logits for logistic regression
         all_targets = np.concatenate(all_targets, axis=0)
@@ -429,6 +490,15 @@ class Experiment(IExperiment):
         self.run_test_dataset()
 
         self.wandb_logger.finish()
+        if os.path.exists(f"{self.logdir}/runs.csv"):
+            with open(f"{self.logdir}/runs.csv", "a") as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=self.config.keys())
+                writer.writerow(self.config)
+        else:
+            with open(f"{self.logdir}/runs.csv", "a") as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=self.config.keys())
+                writer.writeheader()
+                writer.writerow(self.config)
 
     def _objective(self, trial) -> float:
         self._trial = trial
@@ -452,16 +522,27 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--mode",
+        type=str,
+        choices=[
+            "tune",
+            "experiment",
+        ],
+        required=True,
+    )
+    parser.add_argument(
         "--model",
         type=str,
         choices=[
             "mlp",
             "attention_mlp",
             "another_attention_mlp",
+            "new_attention_mlp",
             "nores_mlp",
             "noens_mlp",
             "trans_mlp",
             "lstm",
+            "another_lstm",
             "transformer",
             "my_lr",
             "ens_lr",
@@ -484,10 +565,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     Experiment(
+        mode=args.mode,
         model=args.model,
         dataset=args.ds,
         quantile=args.quantile,
         n_splits=args.num_splits,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-tune-{args.model}-{args.ds}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-{args.mode}-{args.model}-{args.ds}/",
     ).tune(n_trials=args.num_trials)
