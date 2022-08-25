@@ -32,12 +32,13 @@ from src.ts_data import (
 )
 from src.ts_model import (
     LSTM,
-    AnotherLSTM,
     MLP,
     Transformer,
     AttentionMLP,
-    AnotherAttentionMLP,
     NewAttentionMLP,
+)
+from src.ts_model_tests import (
+    AnotherLSTM,
     NewestAttentionMLP,
     EnsembleLogisticRegression,
     AnotherEnsembleLogisticRegression,
