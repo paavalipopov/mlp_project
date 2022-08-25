@@ -18,19 +18,12 @@ bash bin/...  # run experiments
 # use examples/... to analize results
 ```
 
-## Example
-PYTHONPATH=./ python src/scripts/tune_ts_dl.py --model mlp --ds fbirn --max-epochs 100 --num-trials 10
-
-PYTHONPATH=./ python src/scripts/tune_ts_dl_parallel.py --model mlp --ds fbirn --max-epochs 100 --num-trials 10
-
-PYTHONPATH=./ python src/scripts/tune_ts_dl.py --model mlp --ds abide_869 --max-epochs 30 --num-trials 1
-
-PYTHONPATH=./ python src/scripts/lstm_oasis.py --model mlp --ds abide_869 --max-epochs 100 --num-trials 10
-
-PYTHONPATH=./ python src/scripts/lstm_oasis.py --model mlp --ds fbirn --max-epochs 100 --num-trials 10
-
-PYTHONPATH=./ python src/scripts/tune_ts_dl.py --model mlp --ds ukb --max-epochs 200 --num-trials 20
-
-PYTHONPATH=./ python src/scripts/tune_ts_baselines.py --model lr --ds fbirn --num-trials 10
-
-PYTHONPATH=./ python src/scripts/tune_ts_dl.py --model ens-lr --ds fbirn --max-epochs 200 --num-trials 10
+## Examples
+for model in mlp new_attention_mlp lstm transformer
+do
+    for dataset in oasis abide fbirn cobre abide_869
+    do
+        PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode tune --model $model --ds $dataset --max-epochs 200 --num-trials 10     
+        PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode experiment --model $model --ds $dataset --max-epochs 200 --num-trials 10     
+    done
+done
