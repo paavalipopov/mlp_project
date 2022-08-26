@@ -28,16 +28,19 @@ from src.ts_data import (
     load_OASIS,
     load_ABIDE1_869,
     load_UKB,
+    load_BSNIP,
     TSQuantileTransformer,
 )
 from src.ts_model import (
     LSTM,
-    AnotherLSTM,
     MLP,
     Transformer,
     AttentionMLP,
     NewAttentionMLP,
-    AnotherAttentionMLP,
+)
+from src.ts_model_tests import (
+    AnotherLSTM,
+    NewestAttentionMLP,
     EnsembleLogisticRegression,
     AnotherEnsembleLogisticRegression,
     MySVM,
@@ -45,6 +48,7 @@ from src.ts_model import (
     No_Res_MLP,
     No_Ens_MLP,
     Transposed_MLP,
+    UltimateAttentionMLP,
 )
 
 
@@ -54,6 +58,7 @@ class Experiment(IExperiment):
         mode: str,
         model: str,
         dataset: str,
+        test_datasets: list,
         quantile: bool,
         n_splits: int,
         max_epochs: int,
@@ -65,6 +70,15 @@ class Experiment(IExperiment):
         assert not quantile, "Not implemented yet"
         self._model = model
         self._dataset = dataset
+
+        if dataset in test_datasets:
+            # Fraction of the core dataset is always used as a test dataset;
+            # so no need for it in the list of test datasets
+            print(
+                f"Received core dataset {dataset} among test datasets {test_datasets}; removed"
+            )
+        self._test_datasets = test_datasets.remove(dataset)
+
         self._quantile: bool = quantile
         self.n_splits = n_splits
         self._trial: optuna.Trial = None
@@ -72,37 +86,77 @@ class Experiment(IExperiment):
         self.logdir = logdir
 
     def initialize_dataset(self) -> None:
-        if self._dataset == "oasis":
-            features, labels = load_OASIS()
-        elif self._dataset == "abide":
-            features, labels = load_ABIDE1()
-        elif self._dataset == "fbirn":
-            features, labels = load_FBIRN()
-        elif self._dataset == "cobre":
-            features, labels = load_COBRE()
-        elif self._dataset == "abide_869":
-            features, labels = load_ABIDE1_869()
-        elif self._dataset == "ukb":
-            features, labels = load_UKB()
+        if self._dataset in [
+            "fbirn_cobre",
+            "fbirn_bsnip",
+            "bsnip_cobre",
+            "bsnip_fbirn",
+            "cobre_fbirn",
+            "cobre_bsnip",
+        ]:
+            if self._dataset == "fbirn_cobre":
+                X_train, y_train = load_FBIRN()
+                X_test, y_test = load_COBRE()
+            if self._dataset == "fbirn_bsnip":
+                X_train, y_train = load_FBIRN()
+                X_test, y_test = load_BSNIP()
+            if self._dataset == "bsnip_cobre":
+                X_train, y_train = load_BSNIP()
+                X_test, y_test = load_COBRE()
+            if self._dataset == "bsnip_fbirn":
+                X_train, y_train = load_BSNIP()
+                X_test, y_test = load_FBIRN()
+            if self._dataset == "cobre_fbirn":
+                X_train, y_train = load_COBRE()
+                X_test, y_test = load_FBIRN()
+            if self._dataset == "cobre_bsnip":
+                X_train, y_train = load_COBRE()
+                X_test, y_test = load_BSNIP()
 
-        self.data_shape = features.shape
+            self.data_shape = X_train.shape
+            print(f"data shapes: {self.data_shape}; {X_test.shape}")
 
-        print("data shape: ", self.data_shape)
-        skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
-        skf.get_n_splits(features, labels)
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_train,
+                y_train,
+                test_size=self.data_shape[0] // self.n_splits,
+                random_state=42 * self.k + self._trial.number,
+                stratify=y_train,
+            )
+        else:
+            if self._dataset == "oasis":
+                features, labels = load_OASIS()
+            elif self._dataset == "abide":
+                features, labels = load_ABIDE1()
+            elif self._dataset == "fbirn":
+                features, labels = load_FBIRN()
+            elif self._dataset == "cobre":
+                features, labels = load_COBRE()
+            elif self._dataset == "abide_869":
+                features, labels = load_ABIDE1_869()
+            elif self._dataset == "ukb":
+                features, labels = load_UKB()
+            elif self._dataset == "bsnip":
+                features, labels = load_BSNIP()
 
-        train_index, test_index = list(skf.split(features, labels))[self.k]
+            self.data_shape = features.shape
 
-        X_train, X_test = features[train_index], features[test_index]
-        y_train, y_test = labels[train_index], labels[test_index]
+            print("data shape: ", self.data_shape)
+            skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
+            skf.get_n_splits(features, labels)
 
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_train,
-            y_train,
-            test_size=self.data_shape[0] // self.n_splits,
-            random_state=42 + self._trial.number,
-            stratify=y_train,
-        )
+            train_index, test_index = list(skf.split(features, labels))[self.k]
+
+            X_train, X_test = features[train_index], features[test_index]
+            y_train, y_test = labels[train_index], labels[test_index]
+
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_train,
+                y_train,
+                test_size=self.data_shape[0] // self.n_splits,
+                random_state=42 + self._trial.number,
+                stratify=y_train,
+            )
 
         X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
         X_val = np.swapaxes(X_val, 1, 2)  # [n_samples; seq_len; n_features]
@@ -145,8 +199,10 @@ class Experiment(IExperiment):
             config["num_epochs"] = self._trial.suggest_int(
                 "exp.num_epochs", 30, self.max_epochs
             )
+            # pick the max batch_size based on the data shape (fix for div by 0 for some datasets)
+            max_batch_size = min((32, int(self.data_shape[0] / self.n_splits) - 1))
             config["batch_size"] = self._trial.suggest_int(
-                "data.batch_size", 4, 32, log=True
+                "data.batch_size", 4, max_batch_size, log=True
             )
         else:
             config["num_epochs"] = self.max_epochs
@@ -154,25 +210,49 @@ class Experiment(IExperiment):
 
         if self._model in [
             "mlp",
+            "wide_mlp",
+            "deep_mlp",
             "attention_mlp",
-            "another_attention_mlp",
             "new_attention_mlp",
+            "newest_attention_mlp",
             "nores_mlp",
             "noens_mlp",
             "trans_mlp",
+            "ultimate_attention_mlp",
         ]:
             if self._mode == "tune":
-                config["hidden_size"] = self._trial.suggest_int(
-                    "mlp.hidden_size", 32, 256, log=True
-                )
-                config["num_layers"] = self._trial.suggest_int("mlp.num_layers", 0, 4)
+                if self._model == "wide_mlp":
+                    config["hidden_size"] = self._trial.suggest_int(
+                        "mlp.hidden_size", 256, 1024, log=True
+                    )
+                    config["num_layers"] = self._trial.suggest_int(
+                        "mlp.num_layers", 0, 4
+                    )
+                elif self._model == "deep_mlp":
+                    config["hidden_size"] = self._trial.suggest_int(
+                        "mlp.hidden_size", 32, 256, log=True
+                    )
+                    config["num_layers"] = self._trial.suggest_int(
+                        "mlp.num_layers", 4, 20
+                    )
+                else:
+                    config["hidden_size"] = self._trial.suggest_int(
+                        "mlp.hidden_size", 32, 256, log=True
+                    )
+                    config["num_layers"] = self._trial.suggest_int(
+                        "mlp.num_layers", 0, 4
+                    )
                 config["dropout"] = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
-                if self._model == "new_attention_mlp":
+                if self._model in [
+                    "new_attention_mlp",
+                    "newest_attention_mlp",
+                    "ultimate_attention_mlp",
+                ]:
                     config["attention_size"] = self._trial.suggest_int(
                         "mlp.attention_size", 32, 256, log=True
                     )
 
-            if self._model == "mlp":
+            if self._model in ["mlp", "wide_mlp", "deep_mlp"]:
                 model = MLP(
                     input_size=self.data_shape[1],  # PRIOR
                     output_size=2,  # PRIOR
@@ -189,17 +269,28 @@ class Experiment(IExperiment):
                     num_layers=int(config["num_layers"]),
                     dropout=config["dropout"],
                 )
-            elif self._model == "another_attention_mlp":
-                model = AnotherAttentionMLP(
+            elif self._model == "new_attention_mlp":
+                model = NewAttentionMLP(
                     input_size=self.data_shape[1],  # PRIOR
                     time_length=self.data_shape[2],
                     output_size=2,  # PRIOR
                     hidden_size=int(config["hidden_size"]),
+                    attention_size=int(config["attention_size"]),
                     num_layers=int(config["num_layers"]),
                     dropout=config["dropout"],
                 )
-            elif self._model == "new_attention_mlp":
-                model = NewAttentionMLP(
+            elif self._model == "newest_attention_mlp":
+                model = NewestAttentionMLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    attention_size=int(config["attention_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "ultimate_attention_mlp":
+                model = UltimateAttentionMLP(
                     input_size=self.data_shape[1],  # PRIOR
                     time_length=self.data_shape[2],
                     output_size=2,  # PRIOR
@@ -379,7 +470,7 @@ class Experiment(IExperiment):
                     loss.backward()
                     self.optimizer.step()
 
-        total_loss /= self.dataset_batch_step
+        total_loss /= self.dataset_batch_step + 1
 
         y_test = np.hstack(all_targets)
         y_score = np.vstack(all_scores)
@@ -535,9 +626,11 @@ if __name__ == "__main__":
         type=str,
         choices=[
             "mlp",
+            "wide_mlp",
+            "deep_mlp",
             "attention_mlp",
-            "another_attention_mlp",
             "new_attention_mlp",
+            "newest_attention_mlp",
             "nores_mlp",
             "noens_mlp",
             "trans_mlp",
@@ -549,15 +642,52 @@ if __name__ == "__main__":
             "another_ens_lr",
             "my_svm",
             "ens_svm",
+            "ultimate_attention_mlp",
         ],
         required=True,
     )
     parser.add_argument(
         "--ds",
         type=str,
-        choices=["oasis", "abide", "fbirn", "cobre", "abide_869", "ukb"],
+        choices=[
+            "oasis",
+            "abide",
+            "fbirn",
+            "cobre",
+            "abide_869",
+            "ukb",
+            "bsnip",
+            "fbirn_cobre",
+            "fbirn_bsnip",
+            "bsnip_cobre",
+            "bsnip_fbirn",
+            "cobre_fbirn",
+            "cobre_bsnip",
+        ],
         required=True,
     )
+
+    parser.add_argument(
+        "--test-ds",
+        nargs="+",
+        type=str,
+        choices=[
+            "oasis",
+            "abide",
+            "fbirn",
+            "cobre",
+            "abide_869",
+            "ukb",
+            "bsnip",
+            "fbirn_cobre",
+            "fbirn_bsnip",
+            "bsnip_cobre",
+            "bsnip_fbirn",
+            "cobre_fbirn",
+            "cobre_bsnip",
+        ],
+    )
+
     boolean_flag(parser, "quantile", default=False)
     parser.add_argument("--max-epochs", type=int, default=20)
     parser.add_argument("--num-trials", type=int, default=1)
@@ -568,6 +698,7 @@ if __name__ == "__main__":
         mode=args.mode,
         model=args.model,
         dataset=args.ds,
+        test_datasets=args.test_ds,
         quantile=args.quantile,
         n_splits=args.num_splits,
         max_epochs=args.max_epochs,

@@ -351,6 +351,63 @@ def load_UKB(
     return features, labels
 
 
+def load_BSNIP(
+    only_two_classes: bool = True,
+    invert_classes: bool = True,
+    dataset_path: str = DATA_ROOT.joinpath("bsnip/BSNIP_data.npz"),
+    indices_path: str = DATA_ROOT.joinpath("bsnip/correct_indices_GSP.csv"),
+):
+    """
+    Return BSNIP data
+
+    Input:
+    dataset_path: str = DATA_ROOT.joinpath("bsnip/BSNIP_data.npz")
+    - path to the dataset with lablels
+    indices_path: str = DATA_ROOT.joinpath("bsnip/correct_indices_GSP.csv")
+    - path to correct indices/components
+
+
+    Output:
+    features, labels
+    """
+
+    features = None
+    labels = None
+    with np.load(dataset_path) as npzfile:
+        features = npzfile["features"]
+        labels = npzfile["labels"]
+
+    # get correct indices/components
+    indices = pd.read_csv(indices_path, header=None)
+    idx = indices[0].values - 1
+    features = features[:, idx, :]
+
+    if only_two_classes:
+        # leave subjects of class 0 and 1 only
+        # {"NC": 0, "SZ": 1, "SAD": 2, "BP": 3, "BPnon": 4, "OTH": 5}
+        filter_array = []
+        for label in labels:
+            if label in (0, 1):
+                filter_array.append(True)
+            else:
+                filter_array.append(False)
+
+        features = features[filter_array, :, :]
+        labels = labels[filter_array]
+
+    if only_two_classes and invert_classes:
+        new_labels = []
+        for label in labels:
+            if label == 0:
+                new_labels.append(1)
+            else:
+                new_labels.append(0)
+
+        labels = np.array(new_labels)
+
+    return features, labels
+
+
 class TSQuantileTransformer:
     def __init__(self, *args, n_quantiles: int, **kwargs):
         self.n_quantiles = n_quantiles

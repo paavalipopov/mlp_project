@@ -1,46 +1,199 @@
 import os
+import csv
+import argparse
+import json
 
 from captum.attr import IntegratedGradients, NoiseTunnel, Saliency, visualization as viz
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
 import torch
 
 from src.settings import ASSETS_ROOT, LOGS_ROOT, UTCNOW
-from src.ts_data import load_ABIDE1, load_COBRE, load_FBIRN, load_OASIS
-from src.ts_model import LSTM, MLP, Transformer, AttnMLP
+from src.ts_data import (
+    load_ABIDE1,
+    load_COBRE,
+    load_FBIRN,
+    load_OASIS,
+    load_ABIDE1_869,
+    load_UKB,
+    TSQuantileTransformer,
+)
+from src.ts_model import (
+    LSTM,
+    AnotherLSTM,
+    MLP,
+    Transformer,
+    AttentionMLP,
+    NewAttentionMLP,
+    AnotherAttentionMLP,
+    EnsembleLogisticRegression,
+    AnotherEnsembleLogisticRegression,
+    MySVM,
+    EnsembleSVM,
+    No_Res_MLP,
+    No_Ens_MLP,
+    Transposed_MLP,
+)
 
 sns.set_theme(style="whitegrid", font_scale=2, rc={"figure.figsize": (18, 9)})
 
 
 class Introspection:
-    def __init__(
-        self, dataset_name: str, model_name: str, image_path: str, model_path: str
-    ) -> None:
-        self.dataset_name = dataset_name
-        self.model_name = model_name
-        self.image_path = image_path
-        self.model_path = model_path
+    def __init__(self, raw_path: str, methods: list, num_subjects: int) -> None:
+        self.raw_path = raw_path
+        self.introspection_methods = methods
+        self.num_subjects = num_subjects
 
-    def initialize_model(self, model) -> None:
-        # model = LSTM(
-        #     input_size=53,  # PRIOR
-        #     input_len=156,  # PRIOR
-        #     hidden_size=52,
-        #     num_layers=3,
-        #     batch_first=True,
-        #     bidirectional=False,
-        #     fc_dropout=0.2626756675371412,
-        # )
-        # checkpoint = torch.load(
-        #     self.model_path, map_location=lambda storage, loc: storage
-        # )
-        # # print(checkpoint)
-        # model.load_state_dict(checkpoint)
-        # self.model = model.eval()
-        self.model = model
+        _, _, self._model, self._dataset = os.path.split(self.raw_path)[1].split("-")
 
-    def introspection(self, i, feature, introspection_methods: set):
+        self.initialize_dataset()
+        self.initialize_model()
+
+        self.image_path = ASSETS_ROOT.joinpath(
+            f"images/{UTCNOW}-{self._model}-{self._dataset}"
+        )
+
+    def initialize_dataset(self) -> None:
+        if self._dataset == "oasis":
+            features, _ = load_OASIS()
+        elif self._dataset == "abide":
+            features, _ = load_ABIDE1()
+        elif self._dataset == "fbirn":
+            features, _ = load_FBIRN()
+        elif self._dataset == "cobre":
+            features, _ = load_COBRE()
+        elif self._dataset == "abide_869":
+            features, _ = load_ABIDE1_869()
+        elif self._dataset == "ukb":
+            features, _ = load_UKB()
+
+        self.data_shape = features.shape
+        self.features = np.swapaxes(features, 1, 2)  # [n_samples; seq_len; n_features]
+
+    def initialize_model(self) -> None:
+        config_file = os.path.join(self.raw_path, "runs.csv")
+
+        df = pd.read_csv(config_file, delimiter=",")
+        config = df.loc[df["test_score"].idxmax()].to_dict()
+        config.pop("test_score")
+        config.pop("test_accuracy")
+        config.pop("test_loss")
+
+        if self._model in [
+            "mlp",
+            "wide_mlp",
+            "deep_mlp",
+            "attention_mlp",
+            "another_attention_mlp",
+            "new_attention_mlp",
+            "nores_mlp",
+            "noens_mlp",
+            "trans_mlp",
+        ]:
+            if self._model in ["mlp", "wide_mlp", "deep_mlp"]:
+                model = MLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "attention_mlp":
+                model = AttentionMLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "another_attention_mlp":
+                model = AnotherAttentionMLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "new_attention_mlp":
+                model = NewAttentionMLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    time_length=self.data_shape[2],
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    attention_size=int(config["attention_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "nores_mlp":
+                model = No_Res_MLP(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "noens_mlp":
+                model = No_Ens_MLP(
+                    input_size=self.data_shape[1] * self.data_shape[2],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+            elif self._model == "trans_mlp":
+                model = Transposed_MLP(
+                    input_size=self.data_shape[2],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    dropout=config["dropout"],
+                )
+
+        elif self._model in ["lstm", "another_lstm"]:
+            if self._model == "lstm":
+                model = LSTM(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    batch_first=True,
+                    bidirectional=config["bidirectional"],
+                    fc_dropout=config["fc_dropout"],
+                )
+            elif self._model == "another_lstm":
+                model = AnotherLSTM(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    batch_first=True,
+                    bidirectional=False,
+                    fc_dropout=config["fc_dropout"],
+                )
+
+        elif self._model == "transformer":
+            model = Transformer(
+                input_size=self.data_shape[1],  # PRIOR
+                output_size=2,  # PRIOR
+                hidden_size=int(config["hidden_size"]) * int(config["num_heads"]),
+                num_layers=int(config["num_layers"]),
+                num_heads=int(config["num_heads"]),
+                fc_dropout=config["fc_dropout"],
+            )
+
+        else:
+            raise NotImplementedError()
+
+        model_path = os.path.join(self.raw_path, "k_0/0000/model.best.pth")
+        checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
+        model.load_state_dict(checkpoint)
+        self.model = model.eval()
+
+    def introspection(self, i, feature):
         feature = feature.astype(np.float32)
         feature = torch.tensor(feature).unsqueeze(0)
         feature.requires_grad = True
@@ -48,7 +201,7 @@ class Introspection:
         cutoff = (feature.shape[1] * feature.shape[2]) // 20  # 5%
         time_range = feature.shape[1]
 
-        for method in introspection_methods:
+        for method in self.introspection_methods:
             if method == "saliency":
                 saliency = Saliency(self.model)
                 self.model.zero_grad()
@@ -166,7 +319,7 @@ class Introspection:
                 range(time_range),
                 np.sum(grads1.cpu().detach().numpy(), axis=(0, 2)),
                 align="center",
-                color="blue",
+                color="red",
             )
             plt.xlim([0, time_range])
             plt.grid(False)
@@ -178,65 +331,44 @@ class Introspection:
             )
             plt.close()
 
-    def run_introspection(self, introspection_methods: set):
-        if self.dataset_name == "oasis":
-            features, _ = load_OASIS()
-        elif self.dataset_name == "abide":
-            features, _ = load_ABIDE1()
-        elif self.dataset_name == "fbirn":
-            features, _ = load_FBIRN()
-        elif self.dataset_name == "cobre":
-            features, _ = load_COBRE()
-        else:
-            print(f"Dataset '{self.dataset_name}' is undefined")
-            return
-        features = np.swapaxes(features, 1, 2)  # [n_samples; seq_len; n_features]
-
-        if "saliency" in introspection_methods:
+    def run_introspection(self):
+        if "saliency" in self.introspection_methods:
             os.makedirs(self.image_path.joinpath("saliency/colormap"))
             os.makedirs(self.image_path.joinpath("saliency/barchart"))
-        if "ig" in introspection_methods:
+        if "ig" in self.introspection_methods:
             os.makedirs(self.image_path.joinpath("ig/colormap"))
             os.makedirs(self.image_path.joinpath("ig/barchart"))
-        if "ignt" in introspection_methods:
+        if "ignt" in self.introspection_methods:
             os.makedirs(self.image_path.joinpath("ignt/colormap"))
             os.makedirs(self.image_path.joinpath("ignt/barchart"))
 
-        for i, feature in enumerate(features):
-            self.introspection(i, feature, introspection_methods)
+        for i, feature in zip(range(self.num_subjects), self.features):
+            self.introspection(i, feature)
 
 
 if __name__ == "__main__":
-    dataset_name = "fbirn"
-    model_name = "attn_mlp"
-    model_path = LOGS_ROOT.joinpath(
-        "220705.183938-ts-mlp-oasis-qFalse/0000/model.best.pth"
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--methods",
+        nargs="+",
+        choices=["saliency", "ig", "ignt"],
+        required=True,
     )
-    image_path = ASSETS_ROOT.joinpath(f"images/{UTCNOW}-{model_name}-{dataset_name}")
-
-    hidden_size = 49
-    num_layers = 4
-    dropout = 0.150402603192188
-    lr = 0.0001077124920489886
-
-    model = AttnMLP(
-        input_size=53,  # PRIOR
-        output_size=2,  # PRIOR
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        dropout=dropout,
+    parser.add_argument(
+        "--path",
+        type=str,
+        required=True,
     )
-    checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
-    model.load_state_dict(checkpoint)
-    model = model.eval()
-
-    introspection = Introspection(
-        dataset_name=dataset_name,
-        model_name=model_name,
-        image_path=image_path,
-        model_path=model_path,
+    parser.add_argument(
+        "--num-subjects",
+        type=int,
+        default=20,
     )
-    introspection.initialize_model(model=model)
+    args = parser.parse_args()
 
-    introspection_methods = {"saliency", "ig", "ignt"}
-    introspection.run_introspection(introspection_methods)
+    introspection = Introspection(args.path, args.methods, args.num_subjects)
+    introspection.run_introspection()
