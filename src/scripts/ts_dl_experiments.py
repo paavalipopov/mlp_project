@@ -71,13 +71,15 @@ class Experiment(IExperiment):
         self._model = model
         self._dataset = dataset
 
-        if dataset in test_datasets:
+        self._test_datasets = test_datasets
+        if self._dataset in self._test_datasets:
             # Fraction of the core dataset is always used as a test dataset;
-            # so no need for it in the list of test datasets
+            # no need for it in the list of test datasets
             print(
-                f"Received core dataset {dataset} among test datasets {test_datasets}; removed"
+                f"Received core dataset {self._dataset} among test datasets {self._test_datasets}; removed"
             )
-        self._test_datasets = test_datasets.remove(dataset)
+            # removal is intentionally outside of 'if'
+            self._test_datasets.remove(self._dataset)
 
         self._quantile: bool = quantile
         self.n_splits = n_splits
@@ -85,8 +87,8 @@ class Experiment(IExperiment):
         self.max_epochs = max_epochs
         self.logdir = logdir
 
-    def initialize_dataset(self) -> None:
-        if self._dataset in [
+    def initialize_dataset(self, dataset, for_test=False):
+        if dataset in [
             "fbirn_cobre",
             "fbirn_bsnip",
             "bsnip_cobre",
@@ -94,24 +96,31 @@ class Experiment(IExperiment):
             "cobre_fbirn",
             "cobre_bsnip",
         ]:
-            if self._dataset == "fbirn_cobre":
+            if dataset == "fbirn_cobre":
                 X_train, y_train = load_FBIRN()
                 X_test, y_test = load_COBRE()
-            if self._dataset == "fbirn_bsnip":
+            if dataset == "fbirn_bsnip":
                 X_train, y_train = load_FBIRN()
                 X_test, y_test = load_BSNIP()
-            if self._dataset == "bsnip_cobre":
+            if dataset == "bsnip_cobre":
                 X_train, y_train = load_BSNIP()
                 X_test, y_test = load_COBRE()
-            if self._dataset == "bsnip_fbirn":
+            if dataset == "bsnip_fbirn":
                 X_train, y_train = load_BSNIP()
                 X_test, y_test = load_FBIRN()
-            if self._dataset == "cobre_fbirn":
+            if dataset == "cobre_fbirn":
                 X_train, y_train = load_COBRE()
                 X_test, y_test = load_FBIRN()
-            if self._dataset == "cobre_bsnip":
+            if dataset == "cobre_bsnip":
                 X_train, y_train = load_COBRE()
                 X_test, y_test = load_BSNIP()
+
+            if for_test:
+                # you should not use for_test with these datasets, but ok
+                return TensorDataset(
+                    torch.tensor(X_test, dtype=torch.float32),
+                    torch.tensor(y_test, dtype=torch.int64),
+                )
 
             self.data_shape = X_train.shape
             print(f"data shapes: {self.data_shape}; {X_test.shape}")
@@ -123,21 +132,28 @@ class Experiment(IExperiment):
                 random_state=42 * self.k + self._trial.number,
                 stratify=y_train,
             )
+
         else:
-            if self._dataset == "oasis":
+            if dataset == "oasis":
                 features, labels = load_OASIS()
-            elif self._dataset == "abide":
+            elif dataset == "abide":
                 features, labels = load_ABIDE1()
-            elif self._dataset == "fbirn":
+            elif dataset == "fbirn":
                 features, labels = load_FBIRN()
-            elif self._dataset == "cobre":
+            elif dataset == "cobre":
                 features, labels = load_COBRE()
-            elif self._dataset == "abide_869":
+            elif dataset == "abide_869":
                 features, labels = load_ABIDE1_869()
-            elif self._dataset == "ukb":
+            elif dataset == "ukb":
                 features, labels = load_UKB()
-            elif self._dataset == "bsnip":
+            elif dataset == "bsnip":
                 features, labels = load_BSNIP()
+
+            if for_test:
+                return TensorDataset(
+                    torch.tensor(np.swapaxes(features, 1, 2), dtype=torch.float32),
+                    torch.tensor(labels, dtype=torch.int64),
+                )
 
             self.data_shape = features.shape
 
@@ -394,11 +410,14 @@ class Experiment(IExperiment):
         super().on_experiment_start(exp)
 
         # init data
-        self.initialize_dataset()
+        self.initialize_dataset(self._dataset)
 
         # init wandb logger
+        project_ending = ""
+        if self._test_datasets:
+            project_ending = "-tests-" + "_".join(args.test_ds)
         self.wandb_logger: wandb.run = wandb.init(
-            project=f"{UTCNOW}-{self._mode}-{self._model}-{self._dataset}",
+            project=f"{UTCNOW}-{self._mode}-{self._model}-{self._dataset}{project_ending}",
             name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
             save_code=True,
         )
@@ -504,10 +523,10 @@ class Experiment(IExperiment):
             },
         )
 
-    def run_test_dataset(self) -> None:
+    def run_test_dataset(self, dataset_name, test_dataset) -> None:
 
         test_ds = DataLoader(
-            self._test_ds,
+            test_dataset,
             batch_size=self.config["batch_size"],
             num_workers=0,
             shuffle=False,
@@ -535,7 +554,7 @@ class Experiment(IExperiment):
                 all_logits.append(logits.cpu().detach().numpy())
                 total_loss += loss.sum().item()
 
-        total_loss /= self.dataset_batch_step
+        total_loss /= self.dataset_batch_step + 1
 
         y_test = np.hstack(all_targets)
         y_score = np.vstack(all_scores)
@@ -546,39 +565,55 @@ class Experiment(IExperiment):
         for stats_type in [0, 1, "macro", "weighted"]:
             stats = report.loc[stats_type]
             for key, value in stats.items():
-                if "support" not in key:
+                if "support" not in key and dataset_name == "self":
                     self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
 
+        print(f"On {dataset_name} dataset:")
         print("Accuracy ", report["precision"].loc["accuracy"])
         print("AUC ", report["auc"].loc["weighted"])
         print("Loss ", total_loss)
-        self.wandb_logger.log(
-            {
-                "test_accuracy": report["precision"].loc["accuracy"],
-                "test_score": report["auc"].loc["weighted"],
-                "test_loss": total_loss,
-            },
-        )
-        self.config["test_accuracy"] = report["precision"].loc["accuracy"]
-        self.config["test_score"] = report["auc"].loc["weighted"]
-        self.config["test_loss"] = total_loss
 
-        # logits for logistic regression
-        all_targets = np.concatenate(all_targets, axis=0)
-        all_logits = np.concatenate(all_logits, axis=0)
+        if dataset_name == "self":
+            self.wandb_logger.log(
+                {
+                    "test_accuracy": report["precision"].loc["accuracy"],
+                    "test_score": report["auc"].loc["weighted"],
+                    "test_loss": total_loss,
+                },
+            )
+            self.config["test_accuracy"] = report["precision"].loc["accuracy"]
+            self.config["test_score"] = report["auc"].loc["weighted"]
+            self.config["test_loss"] = total_loss
 
-        np.savez(
-            f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/test_scores.npz",
-            logits=all_logits,
-            targets=all_targets,
-        )
+            # logits for logistic regression
+            all_targets = np.concatenate(all_targets, axis=0)
+            all_logits = np.concatenate(all_logits, axis=0)
+
+            np.savez(
+                f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/test_scores.npz",
+                logits=all_logits,
+                targets=all_targets,
+            )
+        else:
+            self.wandb_logger.log(
+                {
+                    f"{dataset_name}_test_accuracy": report["precision"].loc["accuracy"],
+                    f"{dataset_name}_test_score": report["auc"].loc["weighted"],
+                    f"{dataset_name}_test_loss": total_loss,
+                },
+            )
 
     def on_experiment_end(self, exp: "IExperiment") -> None:
         super().on_experiment_end(exp)
         self._score = self.callbacks["early-stop"].best_score
 
         print("Run test dataset")
-        self.run_test_dataset()
+        self.run_test_dataset("self", self._test_ds)
+
+        for dataset_name in self._test_datasets:
+            self.run_test_dataset(
+                dataset_name, self.initialize_dataset(dataset_name, for_test=True)
+            )
 
         self.wandb_logger.finish()
         if os.path.exists(f"{self.logdir}/runs.csv"):
@@ -669,7 +704,7 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--test-ds",
-        nargs="+",
+        nargs="*",
         type=str,
         choices=[
             "oasis",
@@ -694,6 +729,17 @@ if __name__ == "__main__":
     parser.add_argument("--num-splits", type=int, default=5)
     args = parser.parse_args()
 
+    if args.test_ds is None:
+        args.test_ds = []
+        directory_ending = ""
+    else:
+        if args.mode == "tune":
+            directory_ending = ""
+        else:
+            directory_ending = "-tests-" + "_".join(args.test_ds)
+
+    print(f"{LOGS_ROOT}/{UTCNOW}-{args.mode}-{args.model}-{args.ds}{directory_ending}/")
+
     Experiment(
         mode=args.mode,
         model=args.model,
@@ -702,5 +748,5 @@ if __name__ == "__main__":
         quantile=args.quantile,
         n_splits=args.num_splits,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-{args.mode}-{args.model}-{args.ds}/",
+        logdir=f"{LOGS_ROOT}/{UTCNOW}-{args.mode}-{args.model}-{args.ds}{directory_ending}/",
     ).tune(n_trials=args.num_trials)

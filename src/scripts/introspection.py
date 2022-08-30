@@ -18,16 +18,19 @@ from src.ts_data import (
     load_OASIS,
     load_ABIDE1_869,
     load_UKB,
+    load_BSNIP,
     TSQuantileTransformer,
 )
 from src.ts_model import (
     LSTM,
-    AnotherLSTM,
     MLP,
     Transformer,
     AttentionMLP,
     NewAttentionMLP,
-    AnotherAttentionMLP,
+)
+from src.ts_model_tests import (
+    AnotherLSTM,
+    NewestAttentionMLP,
     EnsembleLogisticRegression,
     AnotherEnsembleLogisticRegression,
     MySVM,
@@ -35,6 +38,7 @@ from src.ts_model import (
     No_Res_MLP,
     No_Ens_MLP,
     Transposed_MLP,
+    UltimateAttentionMLP,
 )
 
 sns.set_theme(style="whitegrid", font_scale=2, rc={"figure.figsize": (18, 9)})
@@ -68,6 +72,8 @@ class Introspection:
             features, _ = load_ABIDE1_869()
         elif self._dataset == "ukb":
             features, _ = load_UKB()
+        elif self._dataset == "bsnip":
+            features, _ = load_BSNIP()
 
         self.data_shape = features.shape
         self.features = np.swapaxes(features, 1, 2)  # [n_samples; seq_len; n_features]
@@ -86,11 +92,12 @@ class Introspection:
             "wide_mlp",
             "deep_mlp",
             "attention_mlp",
-            "another_attention_mlp",
             "new_attention_mlp",
+            "newest_attention_mlp",
             "nores_mlp",
             "noens_mlp",
             "trans_mlp",
+            "ultimate_attention_mlp",
         ]:
             if self._model in ["mlp", "wide_mlp", "deep_mlp"]:
                 model = MLP(
@@ -109,12 +116,13 @@ class Introspection:
                     num_layers=int(config["num_layers"]),
                     dropout=config["dropout"],
                 )
-            elif self._model == "another_attention_mlp":
-                model = AnotherAttentionMLP(
+            elif self._model == "ultimate_attention_mlp":
+                model = UltimateAttentionMLP(
                     input_size=self.data_shape[1],  # PRIOR
                     time_length=self.data_shape[2],
                     output_size=2,  # PRIOR
                     hidden_size=int(config["hidden_size"]),
+                    attention_size=int(config["attention_size"]),
                     num_layers=int(config["num_layers"]),
                     dropout=config["dropout"],
                 )
