@@ -11,6 +11,7 @@ from apto.utils.report import get_classification_report
 import numpy as np
 import optuna
 from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.preprocessing import StandardScaler
 import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader, TensorDataset
@@ -20,7 +21,7 @@ from animus import EarlyStoppingCallback, IExperiment
 from animus.torch.callbacks import TorchCheckpointerCallback
 import wandb
 
-from src.settings import LOGS_ROOT, ASSETS_ROOT, UTCNOW
+from src.settings import LOGS_ROOT, UTCNOW
 from src.ts_data import (
     load_ABIDE1,
     load_COBRE,
@@ -29,7 +30,6 @@ from src.ts_data import (
     load_ABIDE1_869,
     load_UKB,
     load_BSNIP,
-    TSQuantileTransformer,
 )
 from src.ts_model import (
     LSTM,
@@ -41,10 +41,6 @@ from src.ts_model import (
 from src.ts_model_tests import (
     AnotherLSTM,
     NewestAttentionMLP,
-    EnsembleLogisticRegression,
-    AnotherEnsembleLogisticRegression,
-    MySVM,
-    EnsembleSVM,
     No_Res_MLP,
     No_Ens_MLP,
     Transposed_MLP,
@@ -58,36 +54,62 @@ class Experiment(IExperiment):
         mode: str,
         model: str,
         dataset: str,
+        scaled: bool,
         test_datasets: list,
+        prefix: str,
         quantile: bool,
         n_splits: int,
         max_epochs: int,
-        logdir: str,
     ) -> None:
         super().__init__()
 
-        self._mode = mode
+        self._mode = mode  # tune or experiment mode
         assert not quantile, "Not implemented yet"
-        self._model = model
-        self._dataset = dataset
+        self._model = model  # model name
+        self._dataset = dataset  # main dataset name (used for training)
+        self._scaled = scaled  # if dataset should be scaled by sklearn's StandardScaler
+        self._quantile = quantile  # Not implemented, False
 
-        self._test_datasets = test_datasets
+        if test_datasets is None:  # additional test datasets
+            self._test_datasets = []
+        else:
+            if self._mode == "tune":
+                print("'Tune' mode overrides additional test datasets")
+                self._test_datasets = []
+            else:
+                self._test_datasets = test_datasets
         if self._dataset in self._test_datasets:
-            # Fraction of the core dataset is always used as a test dataset;
+            # Fraction of the main dataset is always used as a test dataset;
             # no need for it in the list of test datasets
             print(
-                f"Received core dataset {self._dataset} among test datasets {self._test_datasets}; removed"
+                f"Received main dataset {self._dataset} among test datasets {self._test_datasets}; removed"
             )
-            # removal is intentionally outside of 'if'
             self._test_datasets.remove(self._dataset)
 
-        self._quantile: bool = quantile
-        self.n_splits = n_splits
+        self.n_splits = n_splits  # num of splits for StratifiedKFold
+        self._scaler: StandardScaler = None  # scaler for datasets
         self._trial: optuna.Trial = None
         self.max_epochs = max_epochs
-        self.logdir = logdir
+
+        # set project name prefix
+        if len(prefix) == 0:
+            self.project_prefix = f"{UTCNOW}"
+        else:
+            # '-'s are reserved for name parsing
+            self.project_prefix = prefix.replace("-", "_")
+
+        self.project_name = f"{args.mode}-{args.model}-{args.ds}"
+        if self._scaled:
+            self.project_name = f"{args.mode}-{args.model}-scaled_{args.ds}"
+        if len(self._test_datasets) != 0:
+            project_ending = "-tests-" + "_".join(self._test_datasets)
+            self.project_name += project_ending
+
+        self.logdir = f"{LOGS_ROOT}/{self.project_prefix}-{self.project_name}/"
 
     def initialize_dataset(self, dataset, for_test=False):
+        # load core dataset (or additional datasets if for_test==True)
+        # your dataset should have shape [n_features; n_channels; time_len]
         if dataset in [
             "fbirn_cobre",
             "fbirn_bsnip",
@@ -96,6 +118,7 @@ class Experiment(IExperiment):
             "cobre_fbirn",
             "cobre_bsnip",
         ]:
+            # cross datasets; somewhat cheaty, don't use
             if dataset == "fbirn_cobre":
                 X_train, y_train = load_FBIRN()
                 X_test, y_test = load_COBRE()
@@ -114,13 +137,6 @@ class Experiment(IExperiment):
             if dataset == "cobre_bsnip":
                 X_train, y_train = load_COBRE()
                 X_test, y_test = load_BSNIP()
-
-            if for_test:
-                # you should not use for_test with these datasets, but ok
-                return TensorDataset(
-                    torch.tensor(X_test, dtype=torch.float32),
-                    torch.tensor(y_test, dtype=torch.int64),
-                )
 
             self.data_shape = X_train.shape
             print(f"data shapes: {self.data_shape}; {X_test.shape}")
@@ -148,16 +164,32 @@ class Experiment(IExperiment):
                 features, labels = load_UKB()
             elif dataset == "bsnip":
                 features, labels = load_BSNIP()
+            else:
+                raise NotImplementedError()
 
             if for_test:
+                # if dataset is loaded for tests, it should not be
+                # split into train/val/test
+                features = np.swapaxes(
+                    features, 1, 2
+                )  # [n_features; time_len; n_channels;]
+
+                if self._scaled:
+                    features_shape = features.shape
+                    features = self._scaler.transform(
+                        features.reshape(-1, features_shape[2])
+                    )
+                    features = features.reshape(features_shape)
+
                 return TensorDataset(
-                    torch.tensor(np.swapaxes(features, 1, 2), dtype=torch.float32),
+                    torch.tensor(features, dtype=torch.float32),
                     torch.tensor(labels, dtype=torch.int64),
                 )
 
             self.data_shape = features.shape
 
             print("data shape: ", self.data_shape)
+            # train-val/test split
             skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
             skf.get_n_splits(features, labels)
 
@@ -166,6 +198,7 @@ class Experiment(IExperiment):
             X_train, X_test = features[train_index], features[test_index]
             y_train, y_test = labels[train_index], labels[test_index]
 
+            # train/val split
             X_train, X_val, y_train, y_val = train_test_split(
                 X_train,
                 y_train,
@@ -174,9 +207,23 @@ class Experiment(IExperiment):
                 stratify=y_train,
             )
 
-        X_train = np.swapaxes(X_train, 1, 2)  # [n_samples; seq_len; n_features]
-        X_val = np.swapaxes(X_val, 1, 2)  # [n_samples; seq_len; n_features]
-        X_test = np.swapaxes(X_test, 1, 2)  # [n_samples; seq_len; n_features]
+        X_train = np.swapaxes(X_train, 1, 2)  # [n_features; time_len; n_channels;]
+        X_val = np.swapaxes(X_val, 1, 2)  # [n_features; time_len; n_channels;]
+        X_test = np.swapaxes(X_test, 1, 2)  # [n_features; time_len; n_channels;]
+
+        if self._scaled:
+            train_shape = X_train.shape
+            val_shape = X_val.shape
+            test_shape = X_test.shape
+
+            self._scaler = StandardScaler().fit(X_train.reshape(-1, train_shape[2]))
+            X_train = self._scaler.transform(X_train.reshape(-1, train_shape[2]))
+            X_val = self._scaler.transform(X_val.reshape(-1, val_shape[2]))
+            X_test = self._scaler.transform(X_test.reshape(-1, test_shape[2]))
+
+            X_train = X_train.reshape(train_shape)
+            X_val = X_val.reshape(val_shape)
+            X_test = X_test.reshape(test_shape)
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
@@ -192,18 +239,30 @@ class Experiment(IExperiment):
         )
 
     def get_model(self):
+        # return model for experiments
         config = {}
 
         if self._mode == "experiment":
-            config_file = ""
+            # find and load the best tuned model
             config_files = []
+
+            searched_dir = self.project_name.split("-")
+            serached_dir = f"tune-{searched_dir[1]}-{searched_dir[2]}"
+            if self.project_prefix != f"{UTCNOW}":
+                serached_dir = f"{self.project_prefix}-{serached_dir}"
+            print(f"Searching trained model in ./assets/logs/*{serached_dir}")
             for logdir in os.listdir(LOGS_ROOT):
-                if logdir.endswith(f"tune-{args.model}-{args.ds}"):
+                if logdir.endswith(serached_dir):
                     config_files.append(os.path.join(LOGS_ROOT, logdir, "runs.csv"))
 
-            config_file = sorted(config_files)[len(config_files) - 1]
+            if len(config_files) == 0:
+                raise
+            # if multiple configs found, choose the latest
+            config_file = sorted(config_files)[-1]
+            print(f"Using best model from {config_file}")
 
             df = pd.read_csv(config_file, delimiter=",")
+            # pick hyperparams of a model with the highest test_score
             config = df.loc[df["test_score"].idxmax()].to_dict()
             print(config)
 
@@ -212,10 +271,12 @@ class Experiment(IExperiment):
             config.pop("test_loss")
 
         if self._mode == "tune":
+            # pick hyperparams randomly from some range
+
             config["num_epochs"] = self._trial.suggest_int(
                 "exp.num_epochs", 30, self.max_epochs
             )
-            # pick the max batch_size based on the data shape (fix for div by 0 for some datasets)
+            # pick the max batch_size based on the data shape (fix for /0 exception for some datasets)
             max_batch_size = min((32, int(self.data_shape[0] / self.n_splits) - 1))
             config["batch_size"] = self._trial.suggest_int(
                 "data.batch_size", 4, max_batch_size, log=True
@@ -403,29 +464,25 @@ class Experiment(IExperiment):
 
         if self._mode == "tune":
             config["lr"] = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
+            config["link"] = self.wandb_logger.get_url()
 
         return model, config
 
     def on_experiment_start(self, exp: "IExperiment"):
         super().on_experiment_start(exp)
 
-        # init data
-        self.initialize_dataset(self._dataset)
-
         # init wandb logger
-        project_ending = ""
-        if self._test_datasets:
-            project_ending = "-tests-" + "_".join(args.test_ds)
         self.wandb_logger: wandb.run = wandb.init(
-            project=f"{UTCNOW}-{self._mode}-{self._model}-{self._dataset}{project_ending}",
+            project=f"{self.project_prefix}-{self.project_name}",
             name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
             save_code=True,
         )
 
+        # init data
+        self.initialize_dataset(self._dataset)
+
         # init model
         self.model, self.config = self.get_model()
-        if self._mode == "tune":
-            self.config["link"] = self.wandb_logger.get_url()
 
         self.num_epochs = self.config["num_epochs"]
 
@@ -524,7 +581,7 @@ class Experiment(IExperiment):
         )
 
     def run_test_dataset(self, dataset_name, test_dataset) -> None:
-
+        # runs given dataset in a test mode
         test_ds = DataLoader(
             test_dataset,
             batch_size=self.config["batch_size"],
@@ -532,6 +589,7 @@ class Experiment(IExperiment):
             shuffle=False,
         )
 
+        # load bst model weights
         f = open(f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/model.storage.json")
         logpath = json.load(f)["storage"][0]["logpath"]
         checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
@@ -585,7 +643,7 @@ class Experiment(IExperiment):
             self.config["test_score"] = report["auc"].loc["weighted"]
             self.config["test_loss"] = total_loss
 
-            # logits for logistic regression
+            # save logits for logistic regression
             all_targets = np.concatenate(all_targets, axis=0)
             all_logits = np.concatenate(all_logits, axis=0)
 
@@ -610,12 +668,14 @@ class Experiment(IExperiment):
         print("Run test dataset")
         self.run_test_dataset("self", self._test_ds)
 
+        print("Run additional test datasets")
         for dataset_name in self._test_datasets:
             self.run_test_dataset(
                 dataset_name, self.initialize_dataset(dataset_name, for_test=True)
             )
 
         self.wandb_logger.finish()
+        # log hyperparams and metrics (stored in self.condig); crucial for tuning
         if os.path.exists(f"{self.logdir}/runs.csv"):
             with open(f"{self.logdir}/runs.csv", "a") as csvfile:
                 writer = csv.DictWriter(csvfile, fieldnames=self.config.keys())
@@ -633,9 +693,10 @@ class Experiment(IExperiment):
 
     def tune(self, n_trials: int):
         for k in range(self.n_splits):
-            self.k = k
+            self.k = k  # k'th test fold
             self.study = optuna.create_study(direction="maximize")
             self.study.optimize(self._objective, n_trials=n_trials, n_jobs=1)
+            # log optuna Study's metricts (not really used)
             logfile = f"{self.logdir}/optuna_{k}.csv"
             df = self.study.trials_dataframe()
             df.to_csv(logfile, index=False)
@@ -655,6 +716,7 @@ if __name__ == "__main__":
             "experiment",
         ],
         required=True,
+        help="'tune' for model hyperparams tuning; 'experiment' for experiments with tuned model",
     )
     parser.add_argument(
         "--model",
@@ -680,6 +742,7 @@ if __name__ == "__main__":
             "ultimate_attention_mlp",
         ],
         required=True,
+        help="Name of the model to run",
     )
     parser.add_argument(
         "--ds",
@@ -700,6 +763,7 @@ if __name__ == "__main__":
             "cobre_bsnip",
         ],
         required=True,
+        help="Name of the dataset to use for training",
     )
 
     parser.add_argument(
@@ -714,39 +778,49 @@ if __name__ == "__main__":
             "abide_869",
             "ukb",
             "bsnip",
-            "fbirn_cobre",
-            "fbirn_bsnip",
-            "bsnip_cobre",
-            "bsnip_fbirn",
-            "cobre_fbirn",
-            "cobre_bsnip",
         ],
+        help="Additional datasets for testing",
     )
 
-    boolean_flag(parser, "quantile", default=False)
-    parser.add_argument("--max-epochs", type=int, default=20)
-    parser.add_argument("--num-trials", type=int, default=1)
-    parser.add_argument("--num-splits", type=int, default=5)
+    parser.add_argument(
+        "--prefix",
+        type=str,
+        default="",
+        help="Prefix for the project name (body of the project name \
+            is '$mode-$model-$dataset'): default: UTC time",
+    )
+
+    boolean_flag(parser, "quantile", default=False)  # not implemented
+    # whehter dataset should be scaled by sklearn's StandardScaler
+    boolean_flag(parser, "scaled", default=False)
+    parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=30,
+        help="Max number of epochs (min 30)",
+    )
+    parser.add_argument(
+        "--num-trials",
+        type=int,
+        default=1,
+        help="Number of trials to run on each test fold",
+    )
+    parser.add_argument(
+        "--num-splits",
+        type=int,
+        default=5,
+        help="Number of splits for StratifiedKFold (affects the number of test folds)",
+    )
     args = parser.parse_args()
-
-    if args.test_ds is None:
-        args.test_ds = []
-        directory_ending = ""
-    else:
-        if args.mode == "tune":
-            directory_ending = ""
-        else:
-            directory_ending = "-tests-" + "_".join(args.test_ds)
-
-    print(f"{LOGS_ROOT}/{UTCNOW}-{args.mode}-{args.model}-{args.ds}{directory_ending}/")
 
     Experiment(
         mode=args.mode,
         model=args.model,
         dataset=args.ds,
+        scaled=args.scaled,
         test_datasets=args.test_ds,
+        prefix=args.prefix,
         quantile=args.quantile,
         n_splits=args.num_splits,
         max_epochs=args.max_epochs,
-        logdir=f"{LOGS_ROOT}/{UTCNOW}-{args.mode}-{args.model}-{args.ds}{directory_ending}/",
     ).tune(n_trials=args.num_trials)
