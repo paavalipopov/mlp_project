@@ -155,32 +155,6 @@ class Transposed_MLP(nn.Module):
         return logits
 
 
-class AnotherLSTM(nn.Module):
-    def __init__(
-        self,
-        output_size: int,
-        fc_dropout: float = 0.5,
-        hidden_size: int = 128,
-        bidirectional: bool = False,
-        **kwargs,
-    ):
-        super(AnotherLSTM, self).__init__()
-        self.hidden_size = hidden_size
-        self.bidirectional = bidirectional
-        self.lstm = nn.LSTM(
-            hidden_size=hidden_size,
-            bidirectional=bidirectional,
-            proj_size=output_size,
-            dropout=fc_dropout,
-            **kwargs,
-        )
-
-    def forward(self, x):
-        lstm_output, _ = self.lstm(x)
-
-        return lstm_output[:, -1, :]
-
-
 class NewestAttentionMLP(nn.Module):
     def __init__(
         self,
@@ -435,3 +409,103 @@ class UltimateAttentionMLP(nn.Module):
         logits = self.final_layer(attention_output)
 
         return logits
+
+
+class DeepNoahLSTM(nn.Module):
+    def __init__(
+        self,
+        output_size: int,
+        fc_dropout: float = 0.5,
+        hidden_size: int = 128,
+        bidirectional: bool = False,
+        **kwargs,
+    ):
+        super(DeepNoahLSTM, self).__init__()
+        self.hidden_size = hidden_size
+        self.bidirectional = bidirectional
+        self.lstm = nn.LSTM(
+            hidden_size=hidden_size, bidirectional=bidirectional, **kwargs
+        )
+        self.fc = nn.Sequential(
+            nn.LayerNorm(2 * hidden_size if bidirectional else hidden_size),
+            nn.Dropout(p=fc_dropout),
+            nn.Linear(
+                2 * hidden_size if bidirectional else hidden_size,
+                2 * hidden_size if bidirectional else hidden_size,
+            ),
+            nn.ReLU(),
+            nn.LayerNorm(2 * hidden_size if bidirectional else hidden_size),
+            nn.Dropout(p=fc_dropout),
+            nn.Linear(2 * hidden_size if bidirectional else hidden_size, output_size),
+        )
+
+    def forward(self, x):
+        lstm_output, _ = self.lstm(x)
+
+        lstm_output = torch.mean(lstm_output, dim=1)
+        logits = self.fc(lstm_output)
+
+        return logits
+
+
+class OriginalNoahLSTM(nn.Module):
+    def __init__(self, input_size, hidden_nodes, output_size):
+        super(OriginalNoahLSTM, self).__init__()
+        self.hidden = hidden_nodes
+        self.lstm = nn.LSTM(input_size, hidden_nodes, bidirectional=False)
+        self.fc_out = torch.nn.Linear(hidden_nodes, output_size)
+
+    def forward(self, x):
+        lstm_out, (hidden, cell) = self.lstm(x)
+
+        dense = self.fc_out(torch.mean(lstm_out, 0))
+
+        return dense
+
+
+class LastNoahLSTM(nn.Module):
+    def __init__(self, input_size, hidden_nodes, output_size):
+        super(LastNoahLSTM, self).__init__()
+        self.hidden = hidden_nodes
+        self.lstm = nn.LSTM(input_size, hidden_nodes, bidirectional=False, batch_first=True)
+        self.fc_out = torch.nn.Linear(hidden_nodes, output_size)
+
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+
+        dense = self.fc_out(lstm_out[:, -1, :])
+
+        return dense
+
+
+class MeanTransformer(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        output_size: int,
+        fc_dropout: float = 0.5,
+        hidden_size: int = 128,
+        num_layers: int = 1,
+        num_heads: int = 8,
+    ):
+        super(MeanTransformer, self).__init__()
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size, nhead=num_heads, batch_first=True
+        )
+        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        layers = [
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            transformer_encoder,
+        ]
+        self.transformer = nn.Sequential(*layers)
+        self.fc = nn.Sequential(
+            nn.Dropout(p=fc_dropout), nn.Linear(hidden_size, output_size)
+        )
+
+    def forward(self, x):
+        # x.shape = [Batch_size; time_len; n_channels]
+        fc_output = self.transformer(x)
+        fc_output = torch.mean(fc_output, 1)
+        fc_output = self.fc(fc_output)
+        return fc_output
