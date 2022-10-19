@@ -1,5 +1,8 @@
 # pylint: disable=W0201,W0223,C0103,C0115,C0116,R0902,E1101,R0914
-"""Script for tuning different models on different datasets"""
+"""
+Script for tuning different models on different datasets
+TODO: merge with ts_dl_experiments.py
+"""
 import argparse
 import json
 
