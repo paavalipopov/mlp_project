@@ -96,6 +96,35 @@ class LSTM(nn.Module):
         return fc_output
 
 
+class NoahLSTM(nn.Module):
+    def __init__(
+        self,
+        output_size: int,
+        fc_dropout: float = 0.5,
+        hidden_size: int = 128,
+        bidirectional: bool = False,
+        **kwargs,
+    ):
+        super(NoahLSTM, self).__init__()
+        self.hidden_size = hidden_size
+        self.bidirectional = bidirectional
+        self.lstm = nn.LSTM(
+            hidden_size=hidden_size, bidirectional=bidirectional, **kwargs
+        )
+        self.fc = nn.Sequential(
+            nn.Dropout(p=fc_dropout),
+            nn.Linear(2 * hidden_size if bidirectional else hidden_size, output_size),
+        )
+
+    def forward(self, x):
+        lstm_output, _ = self.lstm(x)
+
+        lstm_output = torch.mean(lstm_output, dim=1)
+        logits = self.fc(lstm_output)
+
+        return logits
+
+
 class Transformer(nn.Module):
     def __init__(
         self,
@@ -122,6 +151,7 @@ class Transformer(nn.Module):
         )
 
     def forward(self, x):
+        # x.shape = [Batch_size; time_len; n_channels]
         fc_output = self.transformer(x)
         fc_output = fc_output[:, -1, :]
         fc_output = self.fc(fc_output)
