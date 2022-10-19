@@ -30,21 +30,28 @@ from src.ts_data import (
     load_ABIDE1_869,
     load_UKB,
     load_BSNIP,
+    load_time_FBIRN,
+    load_ROI_FBIRN,
+    load_ROI_HCP,
+    load_ROI_ABIDE,
 )
 from src.ts_model import (
     LSTM,
+    NoahLSTM,
     MLP,
     Transformer,
     AttentionMLP,
     NewAttentionMLP,
 )
 from src.ts_model_tests import (
-    AnotherLSTM,
     NewestAttentionMLP,
     No_Res_MLP,
     No_Ens_MLP,
     Transposed_MLP,
     UltimateAttentionMLP,
+    DeepNoahLSTM,
+    MeanTransformer,
+    LastNoahLSTM,
 )
 
 
@@ -87,7 +94,7 @@ class Experiment(IExperiment):
             self._test_datasets.remove(self._dataset)
 
         self.n_splits = n_splits  # num of splits for StratifiedKFold
-        self._scaler: StandardScaler = None  # scaler for datasets
+        self._scaler: StandardScaler = StandardScaler()  # scaler for datasets
         self._trial: optuna.Trial = None
         self.max_epochs = max_epochs
 
@@ -164,29 +171,74 @@ class Experiment(IExperiment):
                 features, labels = load_UKB()
             elif dataset == "bsnip":
                 features, labels = load_BSNIP()
+            elif dataset == "time_fbirn":
+                features, labels = load_time_FBIRN()
+            elif dataset == "fbirn_100":
+                features, labels = load_ROI_FBIRN(100)
+            elif dataset == "fbirn_200":
+                features, labels = load_ROI_FBIRN(200)
+            elif dataset == "fbirn_400":
+                features, labels = load_ROI_FBIRN(400)
+            elif dataset == "fbirn_1000":
+                features, labels = load_ROI_FBIRN(1000)
+            elif dataset == "hcp_roi":
+                features, labels = load_ROI_HCP()
+            elif dataset == "abide_roi":
+                features, labels = load_ROI_ABIDE()
             else:
                 raise NotImplementedError()
+
+            if self._scaled:
+                # # Time scaling
+                # features_shape = features.shape # [n_features; n_channels; time_len]
+                # features = features.reshape(-1, features_shape[2])
+                # features = features.swapaxes(0, 1)
+
+                # features = self._scaler.fit_transform(features) # first dimension is scaled
+
+                # features = features.swapaxes(0, 1)
+                # features = features.reshape(features_shape)
+
+                # # channel scaling
+                # features = features.swapaxes(1, 2)
+                # features_shape = features.shape  # [n_features; time_len; n_channels]
+                # features = features.reshape(-1, features_shape[2])
+                # features = features.swapaxes(0, 1)
+
+                # features = self._scaler.fit_transform(
+                #     features
+                # )  # first dimension is scaled
+
+                # features = features.swapaxes(0, 1)
+                # features = features.reshape(features_shape)
+                # features = features.swapaxes(1, 2)
+
+                # time-channel scaling
+                features_shape = features.shape  # [n_features; n_channels; time_len]
+                features = features.reshape(features_shape[0], -1)
+                features = features.swapaxes(0, 1)
+
+                features = self._scaler.fit_transform(
+                    features
+                )  # first dimension is scaled
+
+                features = features.swapaxes(0, 1)
+                features = features.reshape(features_shape)
 
             if for_test:
                 # if dataset is loaded for tests, it should not be
                 # split into train/val/test
+
                 features = np.swapaxes(
                     features, 1, 2
-                )  # [n_features; time_len; n_channels;]
-
-                if self._scaled:
-                    features_shape = features.shape
-                    features = self._scaler.transform(
-                        features.reshape(-1, features_shape[2])
-                    )
-                    features = features.reshape(features_shape)
+                )  # [n_features; time_len; n_channels]
 
                 return TensorDataset(
                     torch.tensor(features, dtype=torch.float32),
                     torch.tensor(labels, dtype=torch.int64),
                 )
 
-            self.data_shape = features.shape
+            self.data_shape = features.shape  # [n_features; n_channels; time_len]
 
             print("data shape: ", self.data_shape)
             # train-val/test split
@@ -210,20 +262,6 @@ class Experiment(IExperiment):
         X_train = np.swapaxes(X_train, 1, 2)  # [n_features; time_len; n_channels;]
         X_val = np.swapaxes(X_val, 1, 2)  # [n_features; time_len; n_channels;]
         X_test = np.swapaxes(X_test, 1, 2)  # [n_features; time_len; n_channels;]
-
-        if self._scaled:
-            train_shape = X_train.shape
-            val_shape = X_val.shape
-            test_shape = X_test.shape
-
-            self._scaler = StandardScaler().fit(X_train.reshape(-1, train_shape[2]))
-            X_train = self._scaler.transform(X_train.reshape(-1, train_shape[2]))
-            X_val = self._scaler.transform(X_val.reshape(-1, val_shape[2]))
-            X_test = self._scaler.transform(X_test.reshape(-1, test_shape[2]))
-
-            X_train = X_train.reshape(train_shape)
-            X_val = X_val.reshape(val_shape)
-            X_test = X_test.reshape(test_shape)
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
@@ -255,8 +293,6 @@ class Experiment(IExperiment):
                 if logdir.endswith(serached_dir):
                     config_files.append(os.path.join(LOGS_ROOT, logdir, "runs.csv"))
 
-            if len(config_files) == 0:
-                raise
             # if multiple configs found, choose the latest
             config_file = sorted(config_files)[-1]
             print(f"Using best model from {config_file}")
@@ -401,7 +437,7 @@ class Experiment(IExperiment):
                     dropout=config["dropout"],
                 )
 
-        elif self._model in ["lstm", "another_lstm"]:
+        elif self._model in ["lstm", "noah_lstm", "deep_noah_lstm", "last_noah_lstm"]:
             if self._mode == "tune":
                 config["hidden_size"] = self._trial.suggest_int(
                     "lstm.hidden_size", 32, 256, log=True
@@ -424,8 +460,8 @@ class Experiment(IExperiment):
                     bidirectional=config["bidirectional"],
                     fc_dropout=config["fc_dropout"],
                 )
-            elif self._model == "another_lstm":
-                model = AnotherLSTM(
+            elif self._model == "noah_lstm":
+                model = NoahLSTM(
                     input_size=self.data_shape[1],  # PRIOR
                     output_size=2,  # PRIOR
                     hidden_size=int(config["hidden_size"]),
@@ -434,8 +470,24 @@ class Experiment(IExperiment):
                     bidirectional=False,
                     fc_dropout=config["fc_dropout"],
                 )
+            elif self._model == "deep_noah_lstm":
+                model = DeepNoahLSTM(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]),
+                    num_layers=int(config["num_layers"]),
+                    batch_first=True,
+                    bidirectional=False,
+                    fc_dropout=config["fc_dropout"],
+                )
+            elif self._model == "last_noah_lstm":
+                model = LastNoahLSTM(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_nodes=int(config["hidden_size"]),
+                )
 
-        elif self._model == "transformer":
+        elif self._model in ["transformer", "mean_transformer"]:
             if self._mode == "tune":
                 config["hidden_size"] = self._trial.suggest_int(
                     "transformer.hidden_size", 4, 128, log=True
@@ -449,15 +501,24 @@ class Experiment(IExperiment):
                 config["fc_dropout"] = self._trial.suggest_uniform(
                     "transformer.fc_dropout", 0.1, 0.9
                 )
-
-            model = Transformer(
-                input_size=self.data_shape[1],  # PRIOR
-                output_size=2,  # PRIOR
-                hidden_size=int(config["hidden_size"]) * int(config["num_heads"]),
-                num_layers=int(config["num_layers"]),
-                num_heads=int(config["num_heads"]),
-                fc_dropout=config["fc_dropout"],
-            )
+            if self._model == "transformer":
+                model = Transformer(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]) * int(config["num_heads"]),
+                    num_layers=int(config["num_layers"]),
+                    num_heads=int(config["num_heads"]),
+                    fc_dropout=config["fc_dropout"],
+                )
+            elif self._model == "mean_transformer":
+                model = MeanTransformer(
+                    input_size=self.data_shape[1],  # PRIOR
+                    output_size=2,  # PRIOR
+                    hidden_size=int(config["hidden_size"]) * int(config["num_heads"]),
+                    num_layers=int(config["num_layers"]),
+                    num_heads=int(config["num_heads"]),
+                    fc_dropout=config["fc_dropout"],
+                )
 
         else:
             raise NotImplementedError()
@@ -732,8 +793,11 @@ if __name__ == "__main__":
             "noens_mlp",
             "trans_mlp",
             "lstm",
-            "another_lstm",
+            "noah_lstm",
+            "deep_noah_lstm",
+            "last_noah_lstm",
             "transformer",
+            "mean_transformer",
             "my_lr",
             "ens_lr",
             "another_ens_lr",
@@ -761,6 +825,13 @@ if __name__ == "__main__":
             "bsnip_fbirn",
             "cobre_fbirn",
             "cobre_bsnip",
+            "time_fbirn",
+            "fbirn_100",
+            "fbirn_200",
+            "fbirn_400",
+            "fbirn_1000",
+            "hcp_roi",
+            "abide_roi",
         ],
         required=True,
         help="Name of the dataset to use for training",
