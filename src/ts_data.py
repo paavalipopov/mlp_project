@@ -429,3 +429,160 @@ class TSQuantileTransformer:
                 self.transforms[i].transform(features[:, i, :]) * self.n_quantiles
             ).astype(np.int32)
         return result
+
+
+def load_time_FBIRN(
+    dataset_path: str = DATA_ROOT.joinpath("fbirn/FBIRN_AllData.h5"),
+    indices_path: str = DATA_ROOT.joinpath("fbirn/correct_indices_GSP.csv"),
+):
+    """
+    Return FBIRN normal + inversed time data
+
+    Input:
+    dataset_path: str = DATA_ROOT.joinpath("fbirn/FBIRN_AllData.h5")
+    - path to the dataset
+    indices_path: str = DATA_ROOT.joinpath("fbirn/correct_indices_GSP.csv")
+    - path to correct indices/components
+    labels_path: str = DATA_ROOT.joinpath("fbirn/labels_FBIRN_new.csv")
+    - path to labels
+
+    Output:
+    features, labels
+    """
+
+    data, _ = load_FBIRN(dataset_path, indices_path)
+    inversed_data = np.flip(data, axis=2)
+
+    labels = [0] * data.shape[0]
+    labels.extend([1] * data.shape[0])
+    labels = np.array(labels)
+
+    data = np.concatenate((data, inversed_data))
+
+    return data, labels
+
+
+def load_ROI_FBIRN(
+    regions: int,
+    dataset_path: str = DATA_ROOT.joinpath("fbirn_roi"),
+    labels_path: str = DATA_ROOT.joinpath("fbirn_roi/labels_FBIRN_new.csv"),
+):
+    """
+    Return ROI FBIRN data
+
+    Input:
+    regions: 100/200/400/1000 Schaefer atlases
+    dataset_path: str = DATA_ROOT.joinpath("fbirn_roi")
+    - path to the dataset
+    labels_path: str = DATA_ROOT.joinpath("fbirn_roi/labels_FBIRN_new.csv")
+    - path to labels
+
+    Output:
+    features, labels
+    """
+
+    if regions == 100:
+        final_dataset_path: str = dataset_path.joinpath(
+            f"FBIRN_fMRI_{regions}ShaeferAtlas_onlytimeserieszscored.npz"
+        )
+    elif regions == 200:
+        final_dataset_path: str = dataset_path.joinpath(
+            f"FBIRN_fMRI_{regions}ShaeferAtlas_onlytimeserieszscored.npz"
+        )
+    elif regions == 400:
+        final_dataset_path: str = dataset_path.joinpath(
+            f"FBIRN_fMRI_{regions}ShaeferAtlas_onlytimeserieszscored.npz"
+        )
+    elif regions == 1000:
+        final_dataset_path: str = dataset_path.joinpath(
+            f"FBIRN_fMRI_{regions}ShaeferAtlas_onlytimeserieszscored.npz"
+        )
+    else:
+        raise NotImplementedError()
+    # get data
+    data = np.load(final_dataset_path)
+    # print(data.shape)
+    # >>> (311, regions, 160)
+
+    # get labels
+    labels = pd.read_csv(labels_path, header=None)
+    labels = labels.values.flatten().astype("int") - 1
+
+    return data, labels
+
+
+def load_ROI_HCP(
+    dataset_path: str = DATA_ROOT.joinpath("hcp_roi"),
+):
+    """
+    Return ROI HCP data
+
+    Input:
+    dataset_path: str = DATA_ROOT.joinpath("hcp_roi")
+    - path to the dataset
+
+    Output:
+    features, labels
+    """
+
+    dataset_path1 = dataset_path.joinpath(
+        "HCP_fMRI_200ShaeferAtlas_onlytimeserieszscored.npz"
+    )
+    dataset_path2 = dataset_path.joinpath(
+        "HCP_fMRI_remaining190_200ShaeferAtlas_onlytimeserieszscored.npz"
+    )
+
+    label_path1 = dataset_path.joinpath("HCPlabelsIhave.csv")
+    label_path2 = dataset_path.joinpath("labels_HCP_remaining_190_subjects.csv")
+
+    # get data
+    data1 = np.load(dataset_path1)
+    data2 = np.load(dataset_path2)
+    # print(data1.shape)
+    # print(data2.shape)
+    # >>> (752, 200, 1200)
+    # >>> (190, 200, 1200)
+
+    labels1 = pd.read_csv(label_path1, header=None)
+    labels1 = labels1.values.flatten().astype("int")
+    # (752,)
+
+    labels2 = pd.read_csv(label_path2, header=None)
+    labels2 = labels2.values.flatten().astype("int")
+    # (190,)
+
+    data = np.concatenate((data1, data2))
+    labels = np.concatenate((labels1, labels2))
+
+    return data, labels
+
+
+def load_ROI_ABIDE(
+    dataset_path: str = DATA_ROOT.joinpath(
+        "abide_roi/ABIDE1_AllData_871Subjects_region_shaefer200_316TP_onlytimeserieszscored.npz"
+    ),
+    labels_path: str = DATA_ROOT.joinpath("abide_roi/ABIDE1_region_labels_871.csv"),
+):
+    """
+    Return ROI ABIDE data
+
+    Input:
+    dataset_path: str = DATA_ROOT.joinpath("abide_roi/ABIDE1_AllData_871Subjects_region_shaefer200_316TP_onlytimeserieszscored.npz")
+    - path to the dataset
+    labels_path: str = DATA_ROOT.joinpath("abide_roi/ABIDE1_region_labels_871.csv")
+    - path to labels
+
+    Output:
+    features, labels
+    """
+
+    # get data
+    data = np.load(dataset_path)
+    # print(data.shape)
+    # >>> (871, 200, 316)
+
+    labels = pd.read_csv(labels_path, header=None)
+    labels = labels.values.flatten().astype("int") - 1
+    # (871,)
+
+    return data, labels
