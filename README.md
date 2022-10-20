@@ -19,11 +19,79 @@ bash bin/...  # run experiments
 ```
 
 ## Examples
+```
 for model in mlp new_attention_mlp lstm transformer
 do
-    for dataset in oasis abide fbirn cobre abide_869
+    for dataset in oasis abide fbirn cobre abide_869 bsnip
     do
         PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode tune --model $model --ds $dataset --max-epochs 200 --num-trials 10     
         PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode experiment --model $model --ds $dataset --max-epochs 200 --num-trials 10     
     done
 done
+```
+
+## Options for `src/scripts/ts_dl_experiments.py`
+
+### Required
+- `--mode`: 
+    - `tune` - tune mode: run multiple experiments with different hyperparams
+    - `experiment` - experiment mode: run experiments with best hyperparams found in the `tune` mode
+- `--model`: some of the working models; check the sourse code for more info
+    - `mlp`
+    - `wide_mlp`
+    - `deep_mlp`
+    - `new_attention_mlp`
+    - `lstm`
+    - `noah_lstm`
+    - `transformer`
+    - `mean_transformer`
+- `--ds`: dataset for the experiments
+    - `oasis`
+    - `cobre`
+    - `bsnip`
+
+    - `abide` - ICA ABIDE1 (569 subjects)
+    - `abide_869` - ICA ABIDE1 (869 subjects)
+    - `abide_roi` - ROI Schaefer 200 ABIDE1
+
+    - `ukb`
+
+    - `fbirn` - ICA Fbirn
+    - `time_fbirn` - Time and time-reversed ICA FBIRN
+    - `fbirn_100` - ROI Schaefer 100 FBRIN
+    - `fbirn_200` - ROI Schaefer 200 FBRIN
+    - `fbirn_400` - ROI Schaefer 400 FBRIN
+    - `fbirn_1000` - ROI Schaefer 1000 FBRIN
+
+    - `hcp_roi`
+
+### Optional
+- `--test-ds`: additional datasets for tests
+    - fraction of dataset from `--ds` is always used for tests, no need to use it here
+    - options are the same as for `--ds`
+    - for multiple datasets, write them in a space separated way
+
+- `--prefix`: custom prefix for the project
+    - default prefix is UTC time
+    - appears in the name of logs directory and the name of WandB project
+    - `tune`->`experiment` experiments should use the same prefix (unless it is default)
+    - don't use `-` character in the prefix
+
+- `scaled`: whether dataset should be scaled first using `sklearn`'s `StandardScaler`
+
+- `--max-epochs` - max epochs to use (default=30):
+    - don't use less than 30 epochs
+    - in `tune` mode the number of epochs is choosen randomly between `30` and `max-epochs`
+    - in `experiment` mode the number of epochs is `max-epochs` 
+
+- `--num-splits` - number of splits for `StratifiedKFold` cross-validation (default=5):
+    - the `ds` dataset is split in `num-splits` equally sized folds; 
+    - each fold is used as test dataset `num-splits` times (see below), the rest is train-val dataset
+
+- `--num-trials` - number of trials for each fold (default=1):
+    - for each trial, a new seed for `train_test_split` is used for splitting train-val dataset into train and val datasets
+    - **important note**: if you provide the same `num-splits` and `num-trials` for different experiments on the same dataset, datasets splits will be the same
+
+
+
+
