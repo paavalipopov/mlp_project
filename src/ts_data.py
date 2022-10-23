@@ -511,6 +511,36 @@ def load_ROI_FBIRN(
     return data, labels
 
 
+def load_HCP(
+    dataset_path: str = DATA_ROOT.joinpath("hcp"),
+):
+    """
+    Return ICA HCP data
+
+    Input:
+    dataset_path: str = DATA_ROOT.joinpath("hcp")
+    - path to the dataset
+
+    Output:
+    features, labels
+    """
+
+    final_dataset_path = dataset_path.joinpath("HCP_AllData_sess1.npz")
+
+    label_path = dataset_path.joinpath("labels_HCP_Gender.csv")
+
+    # get data
+    data = np.load(final_dataset_path)
+    # print(data.shape)
+    # >>> (833, 100, 1185)
+
+    labels = pd.read_csv(label_path, header=None)
+    labels = labels.values.flatten().astype("int")
+    # (833,)
+
+    return data, labels
+
+
 def load_ROI_HCP(
     dataset_path: str = DATA_ROOT.joinpath("hcp_roi"),
 ):
