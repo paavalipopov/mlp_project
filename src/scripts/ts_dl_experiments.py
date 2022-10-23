@@ -32,6 +32,7 @@ from src.ts_data import (
     load_BSNIP,
     load_time_FBIRN,
     load_ROI_FBIRN,
+    load_HCP,
     load_ROI_HCP,
     load_ROI_ABIDE,
 )
@@ -181,6 +182,8 @@ class Experiment(IExperiment):
                 features, labels = load_ROI_FBIRN(400)
             elif dataset == "fbirn_1000":
                 features, labels = load_ROI_FBIRN(1000)
+            elif dataset == "hcp":
+                features, labels = load_HCP()
             elif dataset == "hcp_roi":
                 features, labels = load_ROI_HCP()
             elif dataset == "abide_roi":
@@ -830,6 +833,7 @@ if __name__ == "__main__":
             "fbirn_200",
             "fbirn_400",
             "fbirn_1000",
+            "hcp",
             "hcp_roi",
             "abide_roi",
         ],
