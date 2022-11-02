@@ -36,6 +36,7 @@ done
 - `--mode`: 
     - `tune` - tune mode: run multiple experiments with different hyperparams
     - `experiment` - experiment mode: run experiments with best hyperparams found in the `tune` mode
+    - `resume` - see below
 - `--model`: some of the working models; check the sourse code for more info
     - `mlp`
     - `wide_mlp`
@@ -76,6 +77,7 @@ done
     - appears in the name of logs directory and the name of WandB project
     - `tune`->`experiment` experiments should use the same prefix (unless it is default)
     - don't use `-` character in the prefix
+    - don't use `resume` as a prefix
 
 - `scaled`: whether dataset should be scaled first using `sklearn`'s `StandardScaler`
 
@@ -92,6 +94,10 @@ done
     - for each trial, a new seed for `train_test_split` is used for splitting train-val dataset into train and val datasets
     - **important note**: if you provide the same `num-splits` and `num-trials` for different experiments on the same dataset, datasets splits will be the same
 
-
-
+### Required for `resume` mode
+- `--mode`: 
+    - `resume` - resume mode: for resuming interrupted experiment
+- `--path`:
+    - path to the interrupted experiment (e.g., `/Users/user/mlp_project/assets/logs/prefix-mode-model-ds`)
+- note that to resume experiments correctly you need to provide the same `-num-splits` and `--num-trials` as the ones used in the interrupted experiment (unless they are default)
 
