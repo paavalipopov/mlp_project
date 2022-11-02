@@ -2,8 +2,11 @@
 """Script for tuning different models on different datasets"""
 import os
 import csv
+import sys
 import argparse
 import json
+import re
+import shutil
 
 import pandas as pd
 from apto.utils.misc import boolean_flag
@@ -60,6 +63,7 @@ class Experiment(IExperiment):
     def __init__(
         self,
         mode: str,
+        path: str,
         model: str,
         dataset: str,
         scaled: bool,
@@ -67,9 +71,24 @@ class Experiment(IExperiment):
         prefix: str,
         quantile: bool,
         n_splits: int,
+        n_trials: int,
         max_epochs: int,
     ) -> None:
         super().__init__()
+        self.utcnow = UTCNOW
+        # starting fold/trial; used in resumed experiments
+        self.start_k = 0
+        self.start_trial = 0
+
+        if mode == "resume":
+            (
+                mode,
+                model,
+                dataset,
+                scaled,
+                test_datasets,
+                prefix,
+            ) = self.acquire_cont_params(path, n_trials)
 
         self._mode = mode  # tune or experiment mode
         assert not quantile, "Not implemented yet"
@@ -95,25 +114,74 @@ class Experiment(IExperiment):
             self._test_datasets.remove(self._dataset)
 
         self.n_splits = n_splits  # num of splits for StratifiedKFold
+        self.n_trials = n_trials  # num of trials for each fold
         self._scaler: StandardScaler = StandardScaler()  # scaler for datasets
         self._trial: optuna.Trial = None
         self.max_epochs = max_epochs
 
         # set project name prefix
         if len(prefix) == 0:
-            self.project_prefix = f"{UTCNOW}"
+            self.project_prefix = f"{self.utcnow}"
         else:
             # '-'s are reserved for name parsing
             self.project_prefix = prefix.replace("-", "_")
 
-        self.project_name = f"{args.mode}-{args.model}-{args.ds}"
+        self.project_name = f"{self._mode}-{self._model}-{self._dataset}"
         if self._scaled:
-            self.project_name = f"{args.mode}-{args.model}-scaled_{args.ds}"
+            self.project_name = f"{self._mode}-{self._model}-scaled_{self._dataset}"
         if len(self._test_datasets) != 0:
             project_ending = "-tests-" + "_".join(self._test_datasets)
             self.project_name += project_ending
 
         self.logdir = f"{LOGS_ROOT}/{self.project_prefix}-{self.project_name}/"
+
+    def acquire_cont_params(self, path, n_trials):
+        """
+        Used for extracting experiments set-up from the
+        given path for continuing an interrupted experiment
+        """
+        project_params = path.split("/")
+        project_params = project_params[-1].split("-")
+
+        # get params
+        if re.match("(^\d{6}.\d{6}$)", project_params[0]):
+            self.utcnow = project_params[0]
+            prefix = ""
+        else:
+            prefix = project_params[0]
+
+        mode = project_params[1]
+        model = project_params[2]
+
+        if "scaled" in project_params[3]:
+            scaled = True
+            dataset = project_params[3].replace("scaled_", "")
+        else:
+            scaled = False
+            dataset = project_params[3]
+
+        try:
+            test_datasets = project_params[4]
+            test_datasets.split("_")
+            test_datasets = test_datasets[1:]
+        except IndexError:
+            test_datasets = None
+
+        # find when the experiment got interrupted
+        with open(path + "/runs.csv", "r") as fp:
+            lines = len(fp.readlines()) - 1
+            self.start_k = lines // n_trials
+            self.start_trial = lines - self.start_k * n_trials
+
+        # delete failed run
+        faildir = path + f"/k_{self.start_k}/{self.start_trial:04d}"
+        print("Deleting interrupted run logs in " + faildir)
+        try:
+            shutil.rmtree(faildir)
+        except FileNotFoundError:
+            print("Could not delete interrupted run logs - FileNotFoundError")
+
+        return mode, model, dataset, scaled, test_datasets, prefix
 
     def initialize_dataset(self, dataset, for_test=False):
         # load core dataset (or additional datasets if for_test==True)
@@ -153,7 +221,7 @@ class Experiment(IExperiment):
                 X_train,
                 y_train,
                 test_size=self.data_shape[0] // self.n_splits,
-                random_state=42 * self.k + self._trial.number,
+                random_state=42 * self.k + self.trial,
                 stratify=y_train,
             )
 
@@ -258,7 +326,7 @@ class Experiment(IExperiment):
                 X_train,
                 y_train,
                 test_size=self.data_shape[0] // self.n_splits,
-                random_state=42 + self._trial.number,
+                random_state=42 + self.trial,
                 stratify=y_train,
             )
 
@@ -289,7 +357,7 @@ class Experiment(IExperiment):
 
             searched_dir = self.project_name.split("-")
             serached_dir = f"tune-{searched_dir[1]}-{searched_dir[2]}"
-            if self.project_prefix != f"{UTCNOW}":
+            if self.project_prefix != f"{self.utcnow}":
                 serached_dir = f"{self.project_prefix}-{serached_dir}"
             print(f"Searching trained model in ./assets/logs/*{serached_dir}")
             for logdir in os.listdir(LOGS_ROOT):
@@ -538,7 +606,7 @@ class Experiment(IExperiment):
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
             project=f"{self.project_prefix}-{self.project_name}",
-            name=f"{UTCNOW}-k_{self.k}-trial_{self._trial.number}",
+            name=f"{self.utcnow}-k_{self.k}-trial_{self.trial}",
             save_code=True,
         )
 
@@ -582,7 +650,7 @@ class Experiment(IExperiment):
             ),
             "checkpointer": TorchCheckpointerCallback(
                 exp_attr="model",
-                logdir=f"{self.logdir}k_{self.k}/{self._trial.number:04d}",
+                logdir=f"{self.logdir}k_{self.k}/{self.trial:04d}",
                 dataset_key="valid",
                 metric_key="loss",
                 minimize=True,
@@ -654,7 +722,7 @@ class Experiment(IExperiment):
         )
 
         # load bst model weights
-        f = open(f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/model.storage.json")
+        f = open(f"{self.logdir}/k_{self.k}/{self.trial:04d}/model.storage.json")
         logpath = json.load(f)["storage"][0]["logpath"]
         checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
         self.model.load_state_dict(checkpoint)
@@ -712,7 +780,7 @@ class Experiment(IExperiment):
             all_logits = np.concatenate(all_logits, axis=0)
 
             np.savez(
-                f"{self.logdir}/k_{self.k}/{self._trial.number:04d}/test_scores.npz",
+                f"{self.logdir}/k_{self.k}/{self.trial:04d}/test_scores.npz",
                 logits=all_logits,
                 targets=all_targets,
             )
@@ -755,13 +823,25 @@ class Experiment(IExperiment):
         self.run()
         return self._score
 
-    def tune(self, n_trials: int):
-        for k in range(self.n_splits):
+    def tune(self):
+        folds_of_interest = []
+
+        if self.start_trial != self.n_trials:
+            for trial in range(self.start_trial, self.n_trials):
+                folds_of_interest += [(self.start_k, trial)]
+            for k in range(self.start_k + 1, self.n_splits):
+                for trial in range(self.n_trials):
+                    folds_of_interest += [(k, trial)]
+        else:
+            raise IndexError
+
+        for k, trial in folds_of_interest:
             self.k = k  # k'th test fold
+            self.trial = trial  # trial'th trial on the k'th fold
             self.study = optuna.create_study(direction="maximize")
-            self.study.optimize(self._objective, n_trials=n_trials, n_jobs=1)
+            self.study.optimize(self._objective, n_trials=1, n_jobs=1)
             # log optuna Study's metricts (not really used)
-            logfile = f"{self.logdir}/optuna_{k}.csv"
+            logfile = f"{self.logdir}/optuna_{k}_{trial}.csv"
             df = self.study.trials_dataframe()
             df.to_csv(logfile, index=False)
 
@@ -771,6 +851,8 @@ if __name__ == "__main__":
 
     warnings.filterwarnings("ignore")
 
+    for_continue = "resume" in sys.argv
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mode",
@@ -778,9 +860,16 @@ if __name__ == "__main__":
         choices=[
             "tune",
             "experiment",
+            "resume",
         ],
         required=True,
-        help="'tune' for model hyperparams tuning; 'experiment' for experiments with tuned model",
+        help="'tune' for model hyperparams tuning; 'experiment' for experiments with tuned model; 'resume' for resuming interrupted experiment",
+    )
+    parser.add_argument(
+        "--path",
+        type=str,
+        required=for_continue,
+        help="path to the interrupted experiment (e.g., /Users/user/mlp_project/assets/logs/prefix-mode-model-ds)",
     )
     parser.add_argument(
         "--model",
@@ -808,7 +897,7 @@ if __name__ == "__main__":
             "ens_svm",
             "ultimate_attention_mlp",
         ],
-        required=True,
+        required=not for_continue,
         help="Name of the model to run",
     )
     parser.add_argument(
@@ -837,7 +926,7 @@ if __name__ == "__main__":
             "hcp_roi",
             "abide_roi",
         ],
-        required=True,
+        required=not for_continue,
         help="Name of the dataset to use for training",
     )
 
@@ -877,7 +966,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-trials",
         type=int,
-        default=1,
+        default=10,
         help="Number of trials to run on each test fold",
     )
     parser.add_argument(
@@ -890,6 +979,7 @@ if __name__ == "__main__":
 
     Experiment(
         mode=args.mode,
+        path=args.path,
         model=args.model,
         dataset=args.ds,
         scaled=args.scaled,
@@ -897,5 +987,6 @@ if __name__ == "__main__":
         prefix=args.prefix,
         quantile=args.quantile,
         n_splits=args.num_splits,
+        n_trials=args.num_trials,
         max_epochs=args.max_epochs,
-    ).tune(n_trials=args.num_trials)
+    ).tune()
