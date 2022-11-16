@@ -616,3 +616,43 @@ def load_ROI_ABIDE(
     # (871,)
 
     return data, labels
+
+
+def load_dataset(dataset: str):
+    """
+    Return the dataset defined by type
+    """
+    if dataset == "oasis":
+        data, labels = load_OASIS()
+    elif dataset == "abide":
+        data, labels = load_ABIDE1()
+    elif dataset == "fbirn":
+        data, labels = load_FBIRN()
+    elif dataset == "cobre":
+        data, labels = load_COBRE()
+    elif dataset == "abide_869":
+        data, labels = load_ABIDE1_869()
+    elif dataset == "ukb":
+        data, labels = load_UKB()
+    elif dataset == "bsnip":
+        data, labels = load_BSNIP()
+    elif dataset == "time_fbirn":
+        data, labels = load_time_FBIRN()
+    elif dataset == "fbirn_100":
+        data, labels = load_ROI_FBIRN(100)
+    elif dataset == "fbirn_200":
+        data, labels = load_ROI_FBIRN(200)
+    elif dataset == "fbirn_400":
+        data, labels = load_ROI_FBIRN(400)
+    elif dataset == "fbirn_1000":
+        data, labels = load_ROI_FBIRN(1000)
+    elif dataset == "hcp":
+        data, labels = load_HCP()
+    elif dataset == "hcp_roi":
+        data, labels = load_ROI_HCP()
+    elif dataset == "abide_roi":
+        data, labels = load_ROI_ABIDE()
+    else:
+        raise NotImplementedError()
+
+    return data, labels

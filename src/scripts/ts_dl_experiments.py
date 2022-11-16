@@ -1,22 +1,18 @@
 # pylint: disable=W0201,W0223,C0103,C0115,C0116,R0902,E1101,R0914
-"""Script for tuning different models on different datasets"""
+"""Main training script for simple models that output logits"""
 import os
-import csv
 import sys
 import argparse
 import json
-import re
 import shutil
 
 import pandas as pd
 from apto.utils.misc import boolean_flag
 from apto.utils.report import get_classification_report
 import numpy as np
-import optuna
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.preprocessing import StandardScaler
 import torch
-from torch import nn, optim
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
@@ -25,41 +21,23 @@ from animus.torch.callbacks import TorchCheckpointerCallback
 import wandb
 
 from src.settings import LOGS_ROOT, UTCNOW
-from src.ts_data import (
-    load_ABIDE1,
-    load_COBRE,
-    load_FBIRN,
-    load_OASIS,
-    load_ABIDE1_869,
-    load_UKB,
-    load_BSNIP,
-    load_time_FBIRN,
-    load_ROI_FBIRN,
-    load_HCP,
-    load_ROI_HCP,
-    load_ROI_ABIDE,
-)
-from src.ts_model import (
-    LSTM,
-    NoahLSTM,
-    MLP,
-    Transformer,
-    AttentionMLP,
-    NewAttentionMLP,
-)
-from src.ts_model_tests import (
-    NewestAttentionMLP,
-    No_Res_MLP,
-    No_Ens_MLP,
-    Transposed_MLP,
-    UltimateAttentionMLP,
-    DeepNoahLSTM,
-    MeanTransformer,
-    LastNoahLSTM,
-)
+from src.ts_data import load_dataset
+
+# deferred import
+# from src.ts_model import (
+#     get_config,
+#     get_model,
+#     get_criterion,
+#     get_optimizer,
+# )
 
 
 class Experiment(IExperiment):
+    """
+    Animus-based training script. For more info look for animus documentation
+    (it's quite simple)
+    """
+
     def __init__(
         self,
         mode: str,
@@ -69,18 +47,20 @@ class Experiment(IExperiment):
         scaled: bool,
         test_datasets: list,
         prefix: str,
-        quantile: bool,
         n_splits: int,
         n_trials: int,
         max_epochs: int,
     ) -> None:
         super().__init__()
-        self.utcnow = UTCNOW
+        self.config = {}
+
+        self.utcnow = self.config["default_prefix"] = UTCNOW
         # starting fold/trial; used in resumed experiments
         self.start_k = 0
         self.start_trial = 0
 
         if mode == "resume":
+            # get params of the resumed experiment, reset starting fold/trial
             (
                 mode,
                 model,
@@ -88,36 +68,41 @@ class Experiment(IExperiment):
                 scaled,
                 test_datasets,
                 prefix,
-            ) = self.acquire_cont_params(path, n_trials)
+                n_splits,
+                n_trials,
+                max_epochs,
+            ) = self.acquire_params(path, n_trials)
 
-        self._mode = mode  # tune or experiment mode
-        assert not quantile, "Not implemented yet"
-        self._model = model  # model name
-        self._dataset = dataset  # main dataset name (used for training)
-        self._scaled = scaled  # if dataset should be scaled by sklearn's StandardScaler
-        self._quantile = quantile  # Not implemented, False
+        self.mode = self.config["mode"] = mode  # tune or experiment mode
+        self.model = self.config["model"] = model  # model name
+        # main dataset name (used for training)
+        self.dataset_name = self.config["dataset"] = dataset
+        # if dataset should be scaled by sklearn's StandardScaler
+        self._scaled = self.config["scaled"] = scaled
 
         if test_datasets is None:  # additional test datasets
-            self._test_datasets = []
+            self.test_datasets = []
         else:
-            if self._mode == "tune":
+            if self.mode == "tune":
                 print("'Tune' mode overrides additional test datasets")
-                self._test_datasets = []
+                self.test_datasets = []
             else:
-                self._test_datasets = test_datasets
-        if self._dataset in self._test_datasets:
+                self.test_datasets = test_datasets
+
+        if self.dataset_name in self.test_datasets:
             # Fraction of the main dataset is always used as a test dataset;
             # no need for it in the list of test datasets
             print(
-                f"Received main dataset {self._dataset} among test datasets {self._test_datasets}; removed"
+                f"Received main dataset {self.dataset_name} among test datasets {self.test_datasets}; removed"
             )
-            self._test_datasets.remove(self._dataset)
+            self.test_datasets.remove(self.dataset_name)
+        self.config["test_datasets"] = self.test_datasets
 
-        self.n_splits = n_splits  # num of splits for StratifiedKFold
-        self.n_trials = n_trials  # num of trials for each fold
-        self._scaler: StandardScaler = StandardScaler()  # scaler for datasets
-        self._trial: optuna.Trial = None
-        self.max_epochs = max_epochs
+        # num of splits for StratifiedKFold
+        self.n_splits = self.config["n_splits"] = n_splits
+        # num of trials for each fold
+        self.n_trials = self.config["n_trials"] = n_trials
+        self.max_epochs = self.config["max_epochs"] = max_epochs
 
         # set project name prefix
         if len(prefix) == 0:
@@ -125,47 +110,34 @@ class Experiment(IExperiment):
         else:
             # '-'s are reserved for name parsing
             self.project_prefix = prefix.replace("-", "_")
+        self.config["prefix"] = self.project_prefix
 
-        self.project_name = f"{self._mode}-{self._model}-{self._dataset}"
+        self.project_name = f"{self.mode}-{self.model}-{self.dataset_name}"
         if self._scaled:
-            self.project_name = f"{self._mode}-{self._model}-scaled_{self._dataset}"
-        if len(self._test_datasets) != 0:
-            project_ending = "-tests-" + "_".join(self._test_datasets)
+            self.project_name = f"{self.mode}-{self.model}-scaled_{self.dataset_name}"
+        if len(self.test_datasets) != 0:
+            project_ending = "-tests-" + "_".join(self.test_datasets)
             self.project_name += project_ending
+        self.config["project_name"] = self.project_name
 
         self.logdir = f"{LOGS_ROOT}/{self.project_prefix}-{self.project_name}/"
+        self.config["logdir"] = self.logdir
 
-    def acquire_cont_params(self, path, n_trials):
+        # create experiment directory
+        os.makedirs(self.logdir, exist_ok=True)
+        # save initial config
+        logfile = f"{self.logdir}/config.json"
+        with open(logfile, "w") as fp:
+            json.dump(self.config, fp)
+
+    def acquire_params(self, path, n_trials):
         """
-        Used for extracting experiments set-up from the
-        given path for continuing an interrupted experiment
+        Used for extracting experiment set-up from the
+        given path for resuming an interrupted experiment
         """
-        project_params = path.split("/")
-        project_params = project_params[-1].split("-")
-
-        # get params
-        if re.match("(^\d{6}.\d{6}$)", project_params[0]):
-            self.utcnow = project_params[0]
-            prefix = ""
-        else:
-            prefix = project_params[0]
-
-        mode = project_params[1]
-        model = project_params[2]
-
-        if "scaled" in project_params[3]:
-            scaled = True
-            dataset = project_params[3].replace("scaled_", "")
-        else:
-            scaled = False
-            dataset = project_params[3]
-
-        try:
-            test_datasets = project_params[4]
-            test_datasets.split("_")
-            test_datasets = test_datasets[1:]
-        except IndexError:
-            test_datasets = None
+        # load experiment config
+        with open(f"{path}/config.json", "r") as fp:
+            config = json.load(fp)
 
         # find when the experiment got interrupted
         with open(path + "/runs.csv", "r") as fp:
@@ -181,158 +153,72 @@ class Experiment(IExperiment):
         except FileNotFoundError:
             print("Could not delete interrupted run logs - FileNotFoundError")
 
-        return mode, model, dataset, scaled, test_datasets, prefix
+        # reset the default prefix
+        self.utcnow = self.config["default_prefix"] = config["default_prefix"]
 
-    def initialize_dataset(self, dataset, for_test=False):
+        return (
+            config["mode"],
+            config["model"],
+            config["dataset"],
+            config["scaled"],
+            config["test_datasets"],
+            config["prefix"],
+            config["n_splits"],
+            config["n_trials"],
+            config["max_epochs"],
+        )
+
+    def initialize_data(self, dataset, for_test=False):
         # load core dataset (or additional datasets if for_test==True)
         # your dataset should have shape [n_features; n_channels; time_len]
-        if dataset in [
-            "fbirn_cobre",
-            "fbirn_bsnip",
-            "bsnip_cobre",
-            "bsnip_fbirn",
-            "cobre_fbirn",
-            "cobre_bsnip",
-        ]:
-            # cross datasets; somewhat cheaty, don't use
-            if dataset == "fbirn_cobre":
-                X_train, y_train = load_FBIRN()
-                X_test, y_test = load_COBRE()
-            if dataset == "fbirn_bsnip":
-                X_train, y_train = load_FBIRN()
-                X_test, y_test = load_BSNIP()
-            if dataset == "bsnip_cobre":
-                X_train, y_train = load_BSNIP()
-                X_test, y_test = load_COBRE()
-            if dataset == "bsnip_fbirn":
-                X_train, y_train = load_BSNIP()
-                X_test, y_test = load_FBIRN()
-            if dataset == "cobre_fbirn":
-                X_train, y_train = load_COBRE()
-                X_test, y_test = load_FBIRN()
-            if dataset == "cobre_bsnip":
-                X_train, y_train = load_COBRE()
-                X_test, y_test = load_BSNIP()
 
-            self.data_shape = X_train.shape
-            print(f"data shapes: {self.data_shape}; {X_test.shape}")
+        features, labels = load_dataset(dataset)
+        features = np.swapaxes(features, 1, 2)  # [n_features; time_len; n_channels;]
 
-            X_train, X_val, y_train, y_val = train_test_split(
-                X_train,
-                y_train,
-                test_size=self.data_shape[0] // self.n_splits,
-                random_state=42 * self.k + self.trial,
-                stratify=y_train,
+        if self._scaled:
+            # Time scaling
+            # TODO: check if it is correct
+            features_shape = features.shape  # [n_features; time_len; n_channels;]
+            features = features.reshape(-1, features_shape[1])
+            features = features.swapaxes(0, 1)
+
+            scaler = StandardScaler()
+            features = scaler.fit_transform(features)  # first dimension is scaled
+
+            features = features.swapaxes(0, 1)
+            features = features.reshape(features_shape)
+
+        if for_test:
+            # if dataset is loaded for tests, it should not be
+            # split into train/val/test.
+            # it is called in `on_experiment_end` when testing time comes
+
+            return TensorDataset(
+                torch.tensor(features, dtype=torch.float32),
+                torch.tensor(labels, dtype=torch.int64),
             )
 
-        else:
-            if dataset == "oasis":
-                features, labels = load_OASIS()
-            elif dataset == "abide":
-                features, labels = load_ABIDE1()
-            elif dataset == "fbirn":
-                features, labels = load_FBIRN()
-            elif dataset == "cobre":
-                features, labels = load_COBRE()
-            elif dataset == "abide_869":
-                features, labels = load_ABIDE1_869()
-            elif dataset == "ukb":
-                features, labels = load_UKB()
-            elif dataset == "bsnip":
-                features, labels = load_BSNIP()
-            elif dataset == "time_fbirn":
-                features, labels = load_time_FBIRN()
-            elif dataset == "fbirn_100":
-                features, labels = load_ROI_FBIRN(100)
-            elif dataset == "fbirn_200":
-                features, labels = load_ROI_FBIRN(200)
-            elif dataset == "fbirn_400":
-                features, labels = load_ROI_FBIRN(400)
-            elif dataset == "fbirn_1000":
-                features, labels = load_ROI_FBIRN(1000)
-            elif dataset == "hcp":
-                features, labels = load_HCP()
-            elif dataset == "hcp_roi":
-                features, labels = load_ROI_HCP()
-            elif dataset == "abide_roi":
-                features, labels = load_ROI_ABIDE()
-            else:
-                raise NotImplementedError()
+        self.data_shape = features.shape  # [n_features; time_len; n_channels;]
+        self.n_classes = np.unique(labels).shape[0]
 
-            if self._scaled:
-                # # Time scaling
-                # features_shape = features.shape # [n_features; n_channels; time_len]
-                # features = features.reshape(-1, features_shape[2])
-                # features = features.swapaxes(0, 1)
+        print("data shape: ", self.data_shape)
+        # train-val/test split
+        skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
+        skf.get_n_splits(features, labels)
 
-                # features = self._scaler.fit_transform(features) # first dimension is scaled
+        train_index, test_index = list(skf.split(features, labels))[self.k]
 
-                # features = features.swapaxes(0, 1)
-                # features = features.reshape(features_shape)
+        X_train, X_test = features[train_index], features[test_index]
+        y_train, y_test = labels[train_index], labels[test_index]
 
-                # # channel scaling
-                # features = features.swapaxes(1, 2)
-                # features_shape = features.shape  # [n_features; time_len; n_channels]
-                # features = features.reshape(-1, features_shape[2])
-                # features = features.swapaxes(0, 1)
-
-                # features = self._scaler.fit_transform(
-                #     features
-                # )  # first dimension is scaled
-
-                # features = features.swapaxes(0, 1)
-                # features = features.reshape(features_shape)
-                # features = features.swapaxes(1, 2)
-
-                # time-channel scaling
-                features_shape = features.shape  # [n_features; n_channels; time_len]
-                features = features.reshape(features_shape[0], -1)
-                features = features.swapaxes(0, 1)
-
-                features = self._scaler.fit_transform(
-                    features
-                )  # first dimension is scaled
-
-                features = features.swapaxes(0, 1)
-                features = features.reshape(features_shape)
-
-            if for_test:
-                # if dataset is loaded for tests, it should not be
-                # split into train/val/test
-
-                features = np.swapaxes(
-                    features, 1, 2
-                )  # [n_features; time_len; n_channels]
-
-                return TensorDataset(
-                    torch.tensor(features, dtype=torch.float32),
-                    torch.tensor(labels, dtype=torch.int64),
-                )
-
-            self.data_shape = features.shape  # [n_features; n_channels; time_len]
-
-            print("data shape: ", self.data_shape)
-            # train-val/test split
-            skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
-            skf.get_n_splits(features, labels)
-
-            train_index, test_index = list(skf.split(features, labels))[self.k]
-
-            X_train, X_test = features[train_index], features[test_index]
-            y_train, y_test = labels[train_index], labels[test_index]
-
-            # train/val split
-            X_train, X_val, y_train, y_val = train_test_split(
-                X_train,
-                y_train,
-                test_size=self.data_shape[0] // self.n_splits,
-                random_state=42 + self.trial,
-                stratify=y_train,
-            )
-
-        X_train = np.swapaxes(X_train, 1, 2)  # [n_features; time_len; n_channels;]
-        X_val = np.swapaxes(X_val, 1, 2)  # [n_features; time_len; n_channels;]
-        X_test = np.swapaxes(X_test, 1, 2)  # [n_features; time_len; n_channels;]
+        # train/val split
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train,
+            y_train,
+            test_size=self.data_shape[0] // self.n_splits,
+            random_state=42 + self.trial,
+            stratify=y_train,
+        )
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
@@ -347,261 +233,32 @@ class Experiment(IExperiment):
             torch.tensor(y_test, dtype=torch.int64),
         )
 
-    def get_model(self):
-        # return model for experiments
-        config = {}
+    def initialize_model(self):
+        # deferred import - there is a cyclic import
+        from src.ts_model import (
+            get_config,
+            get_model,
+            get_criterion,
+            get_optimizer,
+        )
 
-        if self._mode == "experiment":
-            # find and load the best tuned model
-            config_files = []
+        self.batch_size, self.model_config = get_config(self)
+        self.config["batch_size"] = self.batch_size
 
-            searched_dir = self.project_name.split("-")
-            serached_dir = f"tune-{searched_dir[1]}-{searched_dir[2]}"
-            if self.project_prefix != f"{self.utcnow}":
-                serached_dir = f"{self.project_prefix}-{serached_dir}"
-            print(f"Searching trained model in ./assets/logs/*{serached_dir}")
-            for logdir in os.listdir(LOGS_ROOT):
-                if logdir.endswith(serached_dir):
-                    config_files.append(os.path.join(LOGS_ROOT, logdir, "runs.csv"))
+        self._model = get_model(self.model, self.model_config)
 
-            # if multiple configs found, choose the latest
-            config_file = sorted(config_files)[-1]
-            print(f"Using best model from {config_file}")
+        self.criterion = get_criterion(self.model)
 
-            df = pd.read_csv(config_file, delimiter=",")
-            # pick hyperparams of a model with the highest test_score
-            config = df.loc[df["test_score"].idxmax()].to_dict()
-            print(config)
-
-            config.pop("test_score")
-            config.pop("test_accuracy")
-            config.pop("test_loss")
-
-        if self._mode == "tune":
-            # pick hyperparams randomly from some range
-
-            config["num_epochs"] = self._trial.suggest_int(
-                "exp.num_epochs", 30, self.max_epochs
-            )
-            # pick the max batch_size based on the data shape (fix for /0 exception for some datasets)
-            max_batch_size = min((32, int(self.data_shape[0] / self.n_splits) - 1))
-            config["batch_size"] = self._trial.suggest_int(
-                "data.batch_size", 4, max_batch_size, log=True
-            )
-        else:
-            config["num_epochs"] = self.max_epochs
-            config["batch_size"] = int(config["batch_size"])
-
-        if self._model in [
-            "mlp",
-            "wide_mlp",
-            "deep_mlp",
-            "attention_mlp",
-            "new_attention_mlp",
-            "newest_attention_mlp",
-            "nores_mlp",
-            "noens_mlp",
-            "trans_mlp",
-            "ultimate_attention_mlp",
-        ]:
-            if self._mode == "tune":
-                if self._model == "wide_mlp":
-                    config["hidden_size"] = self._trial.suggest_int(
-                        "mlp.hidden_size", 256, 1024, log=True
-                    )
-                    config["num_layers"] = self._trial.suggest_int(
-                        "mlp.num_layers", 0, 4
-                    )
-                elif self._model == "deep_mlp":
-                    config["hidden_size"] = self._trial.suggest_int(
-                        "mlp.hidden_size", 32, 256, log=True
-                    )
-                    config["num_layers"] = self._trial.suggest_int(
-                        "mlp.num_layers", 4, 20
-                    )
-                else:
-                    config["hidden_size"] = self._trial.suggest_int(
-                        "mlp.hidden_size", 32, 256, log=True
-                    )
-                    config["num_layers"] = self._trial.suggest_int(
-                        "mlp.num_layers", 0, 4
-                    )
-                config["dropout"] = self._trial.suggest_uniform("mlp.dropout", 0.1, 0.9)
-                if self._model in [
-                    "new_attention_mlp",
-                    "newest_attention_mlp",
-                    "ultimate_attention_mlp",
-                ]:
-                    config["attention_size"] = self._trial.suggest_int(
-                        "mlp.attention_size", 32, 256, log=True
-                    )
-
-            if self._model in ["mlp", "wide_mlp", "deep_mlp"]:
-                model = MLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    num_layers=int(config["num_layers"]),
-                    dropout=config["dropout"],
-                )
-            elif self._model == "attention_mlp":
-                model = AttentionMLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    time_length=self.data_shape[2],
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    num_layers=int(config["num_layers"]),
-                    dropout=config["dropout"],
-                )
-            elif self._model == "new_attention_mlp":
-                model = NewAttentionMLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    time_length=self.data_shape[2],
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    attention_size=int(config["attention_size"]),
-                    num_layers=int(config["num_layers"]),
-                    dropout=config["dropout"],
-                )
-            elif self._model == "newest_attention_mlp":
-                model = NewestAttentionMLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    time_length=self.data_shape[2],
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    attention_size=int(config["attention_size"]),
-                    num_layers=int(config["num_layers"]),
-                    dropout=config["dropout"],
-                )
-            elif self._model == "ultimate_attention_mlp":
-                model = UltimateAttentionMLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    time_length=self.data_shape[2],
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    attention_size=int(config["attention_size"]),
-                    num_layers=int(config["num_layers"]),
-                    dropout=config["dropout"],
-                )
-            elif self._model == "nores_mlp":
-                model = No_Res_MLP(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    num_layers=int(config["num_layers"]),
-                    dropout=config["dropout"],
-                )
-            elif self._model == "noens_mlp":
-                model = No_Ens_MLP(
-                    input_size=self.data_shape[1] * self.data_shape[2],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    num_layers=int(config["num_layers"]),
-                    dropout=config["dropout"],
-                )
-            elif self._model == "trans_mlp":
-                model = Transposed_MLP(
-                    input_size=self.data_shape[2],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    num_layers=int(config["num_layers"]),
-                    dropout=config["dropout"],
-                )
-
-        elif self._model in ["lstm", "noah_lstm", "deep_noah_lstm", "last_noah_lstm"]:
-            if self._mode == "tune":
-                config["hidden_size"] = self._trial.suggest_int(
-                    "lstm.hidden_size", 32, 256, log=True
-                )
-                config["num_layers"] = self._trial.suggest_int("lstm.num_layers", 1, 4)
-                config["bidirectional"] = self._trial.suggest_categorical(
-                    "lstm.bidirectional", [True, False]
-                )
-                config["fc_dropout"] = self._trial.suggest_uniform(
-                    "lstm.fc_dropout", 0.1, 0.9
-                )
-
-            if self._model == "lstm":
-                model = LSTM(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    num_layers=int(config["num_layers"]),
-                    batch_first=True,
-                    bidirectional=config["bidirectional"],
-                    fc_dropout=config["fc_dropout"],
-                )
-            elif self._model == "noah_lstm":
-                model = NoahLSTM(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    num_layers=int(config["num_layers"]),
-                    batch_first=True,
-                    bidirectional=False,
-                    fc_dropout=config["fc_dropout"],
-                )
-            elif self._model == "deep_noah_lstm":
-                model = DeepNoahLSTM(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]),
-                    num_layers=int(config["num_layers"]),
-                    batch_first=True,
-                    bidirectional=False,
-                    fc_dropout=config["fc_dropout"],
-                )
-            elif self._model == "last_noah_lstm":
-                model = LastNoahLSTM(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_nodes=int(config["hidden_size"]),
-                )
-
-        elif self._model in ["transformer", "mean_transformer"]:
-            if self._mode == "tune":
-                config["hidden_size"] = self._trial.suggest_int(
-                    "transformer.hidden_size", 4, 128, log=True
-                )
-                config["num_heads"] = self._trial.suggest_int(
-                    "transformer.num_heads", 1, 4
-                )
-                config["num_layers"] = self._trial.suggest_int(
-                    "transformer.num_layers", 1, 4
-                )
-                config["fc_dropout"] = self._trial.suggest_uniform(
-                    "transformer.fc_dropout", 0.1, 0.9
-                )
-            if self._model == "transformer":
-                model = Transformer(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]) * int(config["num_heads"]),
-                    num_layers=int(config["num_layers"]),
-                    num_heads=int(config["num_heads"]),
-                    fc_dropout=config["fc_dropout"],
-                )
-            elif self._model == "mean_transformer":
-                model = MeanTransformer(
-                    input_size=self.data_shape[1],  # PRIOR
-                    output_size=2,  # PRIOR
-                    hidden_size=int(config["hidden_size"]) * int(config["num_heads"]),
-                    num_layers=int(config["num_layers"]),
-                    num_heads=int(config["num_heads"]),
-                    fc_dropout=config["fc_dropout"],
-                )
-
-        else:
-            raise NotImplementedError()
-
-        if self._mode == "tune":
-            config["lr"] = self._trial.suggest_float("adam.lr", 1e-5, 1e-3, log=True)
-            config["link"] = self.wandb_logger.get_url()
-
-        return model, config
+        lr, self.optimizer = get_optimizer(self, self.model_config)
+        self.model_config["lr"] = lr
 
     def on_experiment_start(self, exp: "IExperiment"):
         super().on_experiment_start(exp)
+
+        # create run's path directory
+        self.config["runpath"] = f"{self.logdir}k_{self.k}/{self.trial:04d}"
+        self.config["run_config_path"] = f"{self.config['runpath']}/config.json"
+        os.makedirs(self.config["runpath"], exist_ok=True)
 
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
@@ -611,33 +268,26 @@ class Experiment(IExperiment):
         )
 
         # init data
-        self.initialize_dataset(self._dataset)
+        self.initialize_data(self.dataset_name)
 
         # init model
-        self.model, self.config = self.get_model()
+        self.initialize_model()
 
-        self.num_epochs = self.config["num_epochs"]
-
+        # setup data loaders
         self.datasets = {
             "train": DataLoader(
                 self._train_ds,
-                batch_size=self.config["batch_size"],
+                batch_size=self.batch_size,
                 num_workers=0,
                 shuffle=True,
             ),
             "valid": DataLoader(
                 self._valid_ds,
-                batch_size=self.config["batch_size"],
+                batch_size=self.batch_size,
                 num_workers=0,
                 shuffle=False,
             ),
         }
-
-        self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.Adam(
-            self.model.parameters(),
-            lr=self.config["lr"],
-        )
 
         # setup callbacks
         self.callbacks = {
@@ -649,25 +299,35 @@ class Experiment(IExperiment):
                 min_delta=0.001,
             ),
             "checkpointer": TorchCheckpointerCallback(
-                exp_attr="model",
-                logdir=f"{self.logdir}k_{self.k}/{self.trial:04d}",
+                exp_attr="_model",
+                logdir=self.config["runpath"],
                 dataset_key="valid",
                 metric_key="loss",
                 minimize=True,
             ),
         }
 
+        self.num_epochs = self.max_epochs
+
         self.wandb_logger.config.update(self.config)
+        self.wandb_logger.config.update(self.model_config)
+
+        # update saved config
+        with open(f"{self.logdir}/config.json", "w") as fp:
+            json.dump(self.config, fp)
+        # save model params in the run's directory
+        with open(self.config["run_config_path"], "w") as fp:
+            json.dump(self.model_config, fp)
 
     def run_dataset(self) -> None:
         all_scores, all_targets = [], []
         total_loss = 0.0
-        self.model.train(self.is_train_dataset)
+        self._model.train(self.is_train_dataset)
 
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
-                logits = self.model(data)
+                logits = self._model(data)
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
 
@@ -687,11 +347,6 @@ class Experiment(IExperiment):
         report = get_classification_report(
             y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
         )
-        for stats_type in [0, 1, "macro", "weighted"]:
-            stats = report.loc[stats_type]
-            for key, value in stats.items():
-                if "support" not in key:
-                    self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
 
         self.dataset_metrics = {
             "accuracy": report["precision"].loc["accuracy"],
@@ -712,138 +367,84 @@ class Experiment(IExperiment):
             },
         )
 
-    def run_test_dataset(self, dataset_name, test_dataset) -> None:
-        # runs given dataset in a test mode
-        test_ds = DataLoader(
-            test_dataset,
-            batch_size=self.config["batch_size"],
+    def on_experiment_end(self, exp: "IExperiment") -> None:
+        super().on_experiment_end(exp)
+
+        print("Run test dataset")
+        # load best weights
+        logpath = f"{self.logdir}k_{self.k}/{self.trial:04d}/_model.best.pth"
+        checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
+        self._model.load_state_dict(checkpoint)
+
+        self.dataset_key = "test"
+        self.dataset = DataLoader(
+            self._test_ds,
+            batch_size=self.batch_size,
             num_workers=0,
             shuffle=False,
         )
+        self.run_dataset()
 
-        # load bst model weights
-        f = open(f"{self.logdir}/k_{self.k}/{self.trial:04d}/model.storage.json")
-        logpath = json.load(f)["storage"][0]["logpath"]
-        checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
-        self.model.load_state_dict(checkpoint)
-        self.model.train(False)
-        self.model.zero_grad()
-
-        all_scores, all_targets, all_logits = [], [], []
-        total_loss = 0.0
-
-        with torch.set_grad_enabled(False):
-            for self.dataset_batch_step, (data, target) in enumerate(tqdm(test_ds)):
-                self.optimizer.zero_grad()
-                logits = self.model(data)
-                loss = self.criterion(logits, target)
-                score = torch.softmax(logits, dim=-1)
-
-                all_scores.append(score.cpu().detach().numpy())
-                all_targets.append(target.cpu().detach().numpy())
-                all_logits.append(logits.cpu().detach().numpy())
-                total_loss += loss.sum().item()
-
-        total_loss /= self.dataset_batch_step + 1
-
-        y_test = np.hstack(all_targets)
-        y_score = np.vstack(all_scores)
-        y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
-        report = get_classification_report(
-            y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
-        )
-        for stats_type in [0, 1, "macro", "weighted"]:
-            stats = report.loc[stats_type]
-            for key, value in stats.items():
-                if "support" not in key and dataset_name == "self":
-                    self._trial.set_user_attr(f"{key}_{stats_type}", float(value))
-
-        print(f"On {dataset_name} dataset:")
-        print("Accuracy ", report["precision"].loc["accuracy"])
-        print("AUC ", report["auc"].loc["weighted"])
-        print("Loss ", total_loss)
-
-        if dataset_name == "self":
-            self.wandb_logger.log(
-                {
-                    "test_accuracy": report["precision"].loc["accuracy"],
-                    "test_score": report["auc"].loc["weighted"],
-                    "test_loss": total_loss,
-                },
-            )
-            self.config["test_accuracy"] = report["precision"].loc["accuracy"]
-            self.config["test_score"] = report["auc"].loc["weighted"]
-            self.config["test_loss"] = total_loss
-
-            # save logits for logistic regression
-            all_targets = np.concatenate(all_targets, axis=0)
-            all_logits = np.concatenate(all_logits, axis=0)
-
-            np.savez(
-                f"{self.logdir}/k_{self.k}/{self.trial:04d}/test_scores.npz",
-                logits=all_logits,
-                targets=all_targets,
-            )
-        else:
-            self.wandb_logger.log(
-                {
-                    f"{dataset_name}_test_accuracy": report["precision"].loc["accuracy"],
-                    f"{dataset_name}_test_score": report["auc"].loc["weighted"],
-                    f"{dataset_name}_test_loss": total_loss,
-                },
-            )
-
-    def on_experiment_end(self, exp: "IExperiment") -> None:
-        super().on_experiment_end(exp)
-        self._score = self.callbacks["early-stop"].best_score
-
-        print("Run test dataset")
-        self.run_test_dataset("self", self._test_ds)
+        print("Test results:")
+        print("Accuracy ", self.dataset_metrics["accuracy"])
+        print("AUC ", self.dataset_metrics["score"])
+        print("Loss ", self.dataset_metrics["loss"])
+        results = {
+            "test_accuracy": self.dataset_metrics["accuracy"],
+            "test_score": self.dataset_metrics["score"],
+            "test_loss": self.dataset_metrics["loss"],
+            "config_path": self.config["run_config_path"],
+        }
 
         print("Run additional test datasets")
-        for dataset_name in self._test_datasets:
-            self.run_test_dataset(
-                dataset_name, self.initialize_dataset(dataset_name, for_test=True)
+        for dataset_name in self.test_datasets:
+            test_ds = self.initialize_data(dataset_name, for_test=True)
+            self.dataset = DataLoader(
+                test_ds,
+                batch_size=self.batch_size,
+                num_workers=0,
+                shuffle=False,
             )
+            self.run_dataset()
 
+            print(f"On {dataset_name}:")
+            print("Accuracy ", self.dataset_metrics["accuracy"])
+            print("AUC ", self.dataset_metrics["score"])
+            print("Loss ", self.dataset_metrics["loss"])
+
+            results[f"{dataset_name}_test_accuracy"] = self.dataset_metrics["accuracy"]
+            results[f"{dataset_name}_test_score"] = self.dataset_metrics["score"]
+            results[f"{dataset_name}_test_loss"] = self.dataset_metrics["loss"]
+
+        df = pd.DataFrame(results, index=[0])
+        with open(f"{self.logdir}/runs.csv", "a") as f:
+            df.to_csv(f, header=f.tell() == 0, index=False)
+        self.wandb_logger.log(results)
         self.wandb_logger.finish()
-        # log hyperparams and metrics (stored in self.condig); crucial for tuning
-        if os.path.exists(f"{self.logdir}/runs.csv"):
-            with open(f"{self.logdir}/runs.csv", "a") as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=self.config.keys())
-                writer.writerow(self.config)
-        else:
-            with open(f"{self.logdir}/runs.csv", "a") as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=self.config.keys())
-                writer.writeheader()
-                writer.writerow(self.config)
 
-    def _objective(self, trial) -> float:
-        self._trial = trial
-        self.run()
-        return self._score
-
-    def tune(self):
+    def start(self):
+        # get experiment folds-trial pairs
+        # if mode is 'resume', then it won't have already completed folds
+        # else it is just all folds-trial pairs from (0, 0) to (n_splits, n_trials)
         folds_of_interest = []
 
-        if self.start_trial != self.n_trials:
+        if self.start_trial < self.n_splits:
+            # interrupted fold
             for trial in range(self.start_trial, self.n_trials):
                 folds_of_interest += [(self.start_k, trial)]
+
+            # the rest of folds
             for k in range(self.start_k + 1, self.n_splits):
                 for trial in range(self.n_trials):
                     folds_of_interest += [(k, trial)]
         else:
             raise IndexError
 
+        # run through folds
         for k, trial in folds_of_interest:
             self.k = k  # k'th test fold
             self.trial = trial  # trial'th trial on the k'th fold
-            self.study = optuna.create_study(direction="maximize")
-            self.study.optimize(self._objective, n_trials=1, n_jobs=1)
-            # log optuna Study's metricts (not really used)
-            logfile = f"{self.logdir}/optuna_{k}_{trial}.csv"
-            df = self.study.trials_dataframe()
-            df.to_csv(logfile, index=False)
+            self.run()
 
 
 if __name__ == "__main__":
@@ -863,13 +464,17 @@ if __name__ == "__main__":
             "resume",
         ],
         required=True,
-        help="'tune' for model hyperparams tuning; 'experiment' for experiments with tuned model; 'resume' for resuming interrupted experiment",
+        help="'tune' for model hyperparams tuning; \
+            'experiment' for experiments with tuned model; \
+                'resume' for resuming interrupted experiment",
     )
     parser.add_argument(
         "--path",
         type=str,
         required=for_continue,
-        help="path to the interrupted experiment (e.g., /Users/user/mlp_project/assets/logs/prefix-mode-model-ds)",
+        help="Path to the interrupted experiment \
+            (e.g., /Users/user/mlp_project/assets/logs/prefix-mode-model-ds), \
+                used in 'resume' mode",
     )
     parser.add_argument(
         "--model",
@@ -880,22 +485,10 @@ if __name__ == "__main__":
             "deep_mlp",
             "attention_mlp",
             "new_attention_mlp",
-            "newest_attention_mlp",
-            "nores_mlp",
-            "noens_mlp",
-            "trans_mlp",
             "lstm",
             "noah_lstm",
-            "deep_noah_lstm",
-            "last_noah_lstm",
             "transformer",
             "mean_transformer",
-            "my_lr",
-            "ens_lr",
-            "another_ens_lr",
-            "my_svm",
-            "ens_svm",
-            "ultimate_attention_mlp",
         ],
         required=not for_continue,
         help="Name of the model to run",
@@ -911,12 +504,6 @@ if __name__ == "__main__":
             "abide_869",
             "ukb",
             "bsnip",
-            "fbirn_cobre",
-            "fbirn_bsnip",
-            "bsnip_cobre",
-            "bsnip_fbirn",
-            "cobre_fbirn",
-            "cobre_bsnip",
             "time_fbirn",
             "fbirn_100",
             "fbirn_200",
@@ -942,6 +529,14 @@ if __name__ == "__main__":
             "abide_869",
             "ukb",
             "bsnip",
+            "time_fbirn",
+            "fbirn_100",
+            "fbirn_200",
+            "fbirn_400",
+            "fbirn_1000",
+            "hcp",
+            "hcp_roi",
+            "abide_roi",
         ],
         help="Additional datasets for testing",
     )
@@ -954,9 +549,9 @@ if __name__ == "__main__":
             is '$mode-$model-$dataset'): default: UTC time",
     )
 
-    boolean_flag(parser, "quantile", default=False)  # not implemented
     # whehter dataset should be scaled by sklearn's StandardScaler
     boolean_flag(parser, "scaled", default=False)
+
     parser.add_argument(
         "--max-epochs",
         type=int,
@@ -985,8 +580,7 @@ if __name__ == "__main__":
         scaled=args.scaled,
         test_datasets=args.test_ds,
         prefix=args.prefix,
-        quantile=args.quantile,
         n_splits=args.num_splits,
         n_trials=args.num_trials,
         max_epochs=args.max_epochs,
-    ).tune()
+    ).start()
