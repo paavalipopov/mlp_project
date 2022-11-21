@@ -101,3 +101,5 @@ done
     - path to the interrupted experiment (e.g., `/Users/user/mlp_project/assets/logs/prefix-mode-model-ds`)
 - note that to resume experiments correctly you need to provide the same `-num-splits` and `--num-trials` as the ones used in the interrupted experiment (unless they are default)
 
+## Running ST-DIM experiment
+`PYTHONPATH=./ python src/stdim/ts_stdim_experiments.py --mode tune --ds fbirn --max-epochs 200`
