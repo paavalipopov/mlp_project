@@ -34,7 +34,7 @@ from src.ts_data import load_dataset
 
 class Experiment(IExperiment):
     """
-    Animus-based training script. For more info look for animus documentation
+    Animus-based training script. For more info see animus documentation
     (it's quite simple)
     """
 
@@ -71,7 +71,7 @@ class Experiment(IExperiment):
                 n_splits,
                 n_trials,
                 max_epochs,
-            ) = self.acquire_params(path, n_trials)
+            ) = self.acquire_params(path)
 
         self.mode = self.config["mode"] = mode  # tune or experiment mode
         self.model = self.config["model"] = model  # model name
@@ -130,7 +130,7 @@ class Experiment(IExperiment):
         with open(logfile, "w") as fp:
             json.dump(self.config, fp)
 
-    def acquire_params(self, path, n_trials):
+    def acquire_params(self, path):
         """
         Used for extracting experiment set-up from the
         given path for resuming an interrupted experiment
@@ -142,8 +142,8 @@ class Experiment(IExperiment):
         # find when the experiment got interrupted
         with open(path + "/runs.csv", "r") as fp:
             lines = len(fp.readlines()) - 1
-            self.start_k = lines // n_trials
-            self.start_trial = lines - self.start_k * n_trials
+            self.start_k = lines // config["n_trials"]
+            self.start_trial = lines - self.start_k * config["n_trials"]
 
         # delete failed run
         faildir = path + f"/k_{self.start_k}/{self.start_trial:04d}"
@@ -372,7 +372,7 @@ class Experiment(IExperiment):
 
         print("Run test dataset")
         # load best weights
-        logpath = f"{self.logdir}k_{self.k}/{self.trial:04d}/_model.best.pth"
+        logpath = f"{self.config['runpath']}/_model.best.pth"
         checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
         self._model.load_state_dict(checkpoint)
 
@@ -419,6 +419,7 @@ class Experiment(IExperiment):
         df = pd.DataFrame(results, index=[0])
         with open(f"{self.logdir}/runs.csv", "a") as f:
             df.to_csv(f, header=f.tell() == 0, index=False)
+        results.pop("config_path")
         self.wandb_logger.log(results)
         self.wandb_logger.finish()
 
