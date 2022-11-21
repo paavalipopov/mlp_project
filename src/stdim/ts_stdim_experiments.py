@@ -1,5 +1,5 @@
 # pylint: disable=W0201,W0223,C0103,C0115,C0116,R0902,E1101,R0914
-"""Main training script for simple models that output logits"""
+"""Main training script for STDIM model"""
 import os
 import sys
 import argparse
@@ -23,8 +23,8 @@ import wandb
 from src.settings import LOGS_ROOT, UTCNOW
 from src.ts_data import load_dataset
 
-# deferred import
-# from src.ts_model import (
+# # deferred import
+# from src.stdim.ts_stdim_model import (
 #     get_config,
 #     get_model,
 #     get_criterion,
@@ -32,7 +32,7 @@ from src.ts_data import load_dataset
 # )
 
 
-class Experiment(IExperiment):
+class STDIM_Experiment(IExperiment):
     """
     Animus-based training script. For more info see animus documentation
     (it's quite simple)
@@ -42,7 +42,7 @@ class Experiment(IExperiment):
         self,
         mode: str,
         path: str,
-        model: str,
+        pretraining: str,
         dataset: str,
         scaled: bool,
         test_datasets: list,
@@ -63,7 +63,7 @@ class Experiment(IExperiment):
             # get params of the resumed experiment, reset starting fold/trial
             (
                 mode,
-                model,
+                pretraining,
                 dataset,
                 scaled,
                 test_datasets,
@@ -74,7 +74,10 @@ class Experiment(IExperiment):
             ) = self.acquire_params(path)
 
         self.mode = self.config["mode"] = mode  # tune or experiment mode
-        self.model = self.config["model"] = model  # model name
+        self.model = self.config["model"] = "stdim"  # model name
+        # whether encoder should be pretrained: NPT, FPT, UFPT:
+        # no pretraining, frozen pretrained, unfrozen pretrained
+        self.pretraining = self.config["pretraining"] = pretraining
         # main dataset name (used for training)
         self.dataset_name = self.config["dataset"] = dataset
         # if dataset should be scaled by sklearn's StandardScaler
@@ -158,7 +161,7 @@ class Experiment(IExperiment):
 
         return (
             config["mode"],
-            config["model"],
+            config["pretraining"],
             config["dataset"],
             config["scaled"],
             config["test_datasets"],
@@ -188,18 +191,54 @@ class Experiment(IExperiment):
             features = features.swapaxes(0, 1)
             features = features.reshape(features_shape)
 
+        # back to [n_features; n_channels; time_len]
+        features = np.swapaxes(features, 1, 2)
+
+        # get dataset params (along with other model params)
+        # deffered import
+        from src.stdim.ts_stdim_model import get_config
+
+        self.n_classes = np.unique(labels).shape[0]
+        self.batch_size, self.model_config = get_config(self, features.shape)
+        self.config["batch_size"] = self.batch_size
+
+        # reshape data's time dimension into windows:
+        subjects = features.shape[0]  # subjects
+        tc = features.shape[2]  # original time length
+        # window x dim, or channels (equals to encoder input_channels)
+        sample_x = features.shape[1]
+        # window y dim, or window time
+        sample_y = self.model_config["datashape"]["window_size"]
+        # windows shift - how much windows overlap
+        window_shift = self.model_config["datashape"]["window_shift"]
+        # number of windows, or new time
+        samples_per_subject = tc // window_shift - (sample_y // window_shift + 1)
+
+        reshaped_features = np.zeros((subjects, samples_per_subject, sample_x, sample_y))
+        for i in range(subjects):
+            for j in range(samples_per_subject):
+                reshaped_features[i, j, :, :] = features[
+                    i, :, (j * window_shift) : (j * window_shift) + sample_y
+                ]
+
+        features = reshaped_features
+
         if for_test:
             # if dataset is loaded for tests, it should not be
             # split into train/val/test.
             # it is called in `on_experiment_end` when testing time comes
+
+            # reshape data for probes
+            labels = np.kron(labels, np.ones((1, features.shape[1]))).squeeze()
+            features = features.reshape(-1, features.shape[2], features.shape[3])
 
             return TensorDataset(
                 torch.tensor(features, dtype=torch.float32),
                 torch.tensor(labels, dtype=torch.int64),
             )
 
-        self.data_shape = features.shape  # [n_features; time_len; n_channels;]
-        self.n_classes = np.unique(labels).shape[0]
+        # [subjects; samples_per_subject; sample_x; sample_y;]
+        self.data_shape = features.shape
 
         print("data shape: ", self.data_shape)
         # train-val/test split
@@ -220,6 +259,19 @@ class Experiment(IExperiment):
             stratify=y_train,
         )
 
+        # encoder requires data that's prepared differently
+        self.encoder_dataset = {"train": X_train.copy(), "val": X_val.copy()}
+
+        # reshape data for probes (last time)
+        y_train = np.kron(y_train, np.ones((1, X_train.shape[1]))).squeeze()
+        X_train = X_train.reshape(-1, X_train.shape[2], X_train.shape[3])
+
+        y_val = np.kron(y_val, np.ones((1, X_val.shape[1]))).squeeze()
+        X_val = X_val.reshape(-1, X_val.shape[2], X_val.shape[3])
+
+        y_test = np.kron(y_test, np.ones((1, X_test.shape[1]))).squeeze()
+        X_test = X_test.reshape(-1, X_test.shape[2], X_test.shape[3])
+
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
             torch.tensor(y_train, dtype=torch.int64),
@@ -235,22 +287,22 @@ class Experiment(IExperiment):
 
     def initialize_model(self):
         # deferred import - there is a cyclic import
-        from src.ts_model import (
-            get_config,
-            get_model,
+        from src.stdim.ts_stdim_model import (
+            get_encoder,
+            get_probe,
             get_criterion,
             get_optimizer,
         )
 
-        self.batch_size, self.model_config = get_config(self)
-        self.config["batch_size"] = self.batch_size
+        self.encoder = get_encoder(self, self.model_config["encoder"])
 
-        self._model = get_model(self.model, self.model_config)
+        self.probe = get_probe(self, self.model_config["probe"])
 
-        self.criterion = get_criterion(self.model)
+        self.criterion = get_criterion(self)
 
-        lr, self.optimizer = get_optimizer(self, self.model_config)
-        self.model_config["lr"] = lr
+        self.optimizer = get_optimizer(
+            self, self.model_config["encoder"], self.model_config["probe"]
+        )
 
     def on_experiment_start(self, exp: "IExperiment"):
         super().on_experiment_start(exp)
@@ -299,7 +351,7 @@ class Experiment(IExperiment):
                 min_delta=0.001,
             ),
             "checkpointer": TorchCheckpointerCallback(
-                exp_attr="_model",
+                exp_attr="probe",
                 logdir=self.config["runpath"],
                 dataset_key="valid",
                 metric_key="loss",
@@ -322,12 +374,17 @@ class Experiment(IExperiment):
     def run_dataset(self) -> None:
         all_scores, all_targets = [], []
         total_loss = 0.0
-        self._model.train(self.is_train_dataset)
+
+        self.encoder.train(self.is_train_dataset)
+        self.probe.train(self.is_train_dataset)
 
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
                 self.optimizer.zero_grad()
-                logits = self._model(data)
+
+                encoded_data = self.encoder(data)
+                logits = self.probe(encoded_data)
+
                 loss = self.criterion(logits, target)
                 score = torch.softmax(logits, dim=-1)
 
@@ -372,9 +429,9 @@ class Experiment(IExperiment):
 
         print("Run test dataset")
         # load best weights
-        logpath = f"{self.config['runpath']}/_model.best.pth"
+        logpath = f"{self.logdir}k_{self.k}/{self.trial:04d}/probe.best.pth"
         checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
-        self._model.load_state_dict(checkpoint)
+        self.probe.load_state_dict(checkpoint)
 
         self.dataset_key = "test"
         self.dataset = DataLoader(
@@ -478,21 +535,15 @@ if __name__ == "__main__":
                 used in 'resume' mode",
     )
     parser.add_argument(
-        "--model",
+        "--pretraining",
         type=str,
         choices=[
-            "mlp",
-            "wide_mlp",
-            "deep_mlp",
-            "attention_mlp",
-            "new_attention_mlp",
-            "lstm",
-            "noah_lstm",
-            "transformer",
-            "mean_transformer",
+            "NPT",  # no pretraining
+            "FPT",  # frozen pretrained
+            "UFPT",  # unfrozen pretrained
         ],
-        required=not for_continue,
-        help="Name of the model to run",
+        default="NPT",
+        help="Whether encoder should be pretrained or not",
     )
     parser.add_argument(
         "--ds",
@@ -573,10 +624,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    Experiment(
+    STDIM_Experiment(
         mode=args.mode,
         path=args.path,
-        model=args.model,
+        pretraining=args.pretraining,
         dataset=args.ds,
         scaled=args.scaled,
         test_datasets=args.test_ds,
