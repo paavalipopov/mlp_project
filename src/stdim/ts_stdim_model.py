@@ -135,7 +135,7 @@ def get_optimizer(exp: STDIM_Experiment, encoder_config, probe_config):
         lr=float(probe_config["lr"]),
     )
     # optimizer = optim.Adam(
-    #     list(exp.probe.parameters()) + list(self.encoder.parameters()),
+    #     list(exp.probe.parameters()) + list(exp.encoder.parameters()),
     #     lr=float(probe_config["lr"]),
     # )
 

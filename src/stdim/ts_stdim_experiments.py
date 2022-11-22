@@ -486,7 +486,10 @@ class STDIM_Experiment(IExperiment):
         # else it is just all folds-trial pairs from (0, 0) to (n_splits, n_trials)
         folds_of_interest = []
 
-        if self.start_trial < self.n_splits:
+        print(self.start_k)
+        print(self.n_splits)
+
+        if self.start_k < self.n_splits:
             # interrupted fold
             for trial in range(self.start_trial, self.n_trials):
                 folds_of_interest += [(self.start_k, trial)]
