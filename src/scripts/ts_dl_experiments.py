@@ -263,7 +263,7 @@ class Experiment(IExperiment):
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
             project=f"{self.project_prefix}-{self.project_name}",
-            name=f"{self.utcnow}-k_{self.k}-trial_{self.trial}",
+            name=f"k_{self.k}-trial_{self.trial}",
             save_code=True,
         )
 
