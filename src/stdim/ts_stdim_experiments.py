@@ -315,7 +315,7 @@ class STDIM_Experiment(IExperiment):
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
             project=f"{self.project_prefix}-{self.project_name}",
-            name=f"{self.utcnow}-k_{self.k}-trial_{self.trial}",
+            name=f"k_{self.k}-trial_{self.trial}",
             save_code=True,
         )
 
@@ -375,7 +375,8 @@ class STDIM_Experiment(IExperiment):
         all_scores, all_targets = [], []
         total_loss = 0.0
 
-        self.encoder.train(self.is_train_dataset)
+        # self.encoder.train(self.is_train_dataset)
+        self.encoder.train(False)
         self.probe.train(self.is_train_dataset)
 
         with torch.set_grad_enabled(self.is_train_dataset):
@@ -485,9 +486,6 @@ class STDIM_Experiment(IExperiment):
         # if mode is 'resume', then it won't have already completed folds
         # else it is just all folds-trial pairs from (0, 0) to (n_splits, n_trials)
         folds_of_interest = []
-
-        print(self.start_k)
-        print(self.n_splits)
 
         if self.start_k < self.n_splits:
             # interrupted fold

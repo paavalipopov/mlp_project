@@ -221,7 +221,6 @@ class EncoderTrainer(IExperiment):
 
         print("Done training encoder")
 
-        print("Test results:")
         print("Best loss ", self.callbacks["early-stop"].best_score)
 
     def train_encoder(self):

@@ -67,7 +67,7 @@ def get_config(exp: STDIM_Experiment, data_shape):
         model_config["datashape"]["window_size"] = randint.rvs(9, data_shape[2] // 5)
         # window shift determines how much the windows overlap
         model_config["datashape"]["window_shift"] = randint.rvs(
-            1, model_config["datashape"]["window_size"]
+            2, model_config["datashape"]["window_size"]
         )
 
         # params of encoder
