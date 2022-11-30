@@ -415,7 +415,7 @@ def load_time_FBIRN(
     features, labels
     """
 
-    data, _ = load_FBIRN(dataset_path, indices_path, filter_indices)
+    data, _ = load_FBIRN(dataset_path, indices_path, filter_indices=filter_indices)
     inversed_data = np.flip(data, axis=2)
 
     labels = [0] * data.shape[0]
