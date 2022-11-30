@@ -12,6 +12,7 @@ def load_ABIDE1(
     dataset_path: str = DATA_ROOT.joinpath("abide/ABIDE1_AllData.h5"),
     indices_path: str = DATA_ROOT.joinpath("abide/correct_indices_GSP.csv"),
     labels_path: str = DATA_ROOT.joinpath("abide/labels_ABIDE1.csv"),
+    filter_indices: bool = True,
 ):
     """
     Return ABIDE1 data
@@ -23,6 +24,8 @@ def load_ABIDE1(
     - path to correct indices/components
     labels_path: str = DATA_ROOT.joinpath("abide/labels_ABIDE1.csv")
     - path to labels
+    filter_indices: bool = True
+    - whether ICA components should be filtered
 
     Output:
     features, labels
@@ -43,13 +46,14 @@ def load_ABIDE1(
     # 100 - components - data.shape[1]
     # 140 - time points - data.shape[2]
 
-    # get correct indices/components
-    indices = pd.read_csv(indices_path, header=None)
-    idx = indices[0].values - 1
-    # filter the data: leave only correct components
-    data = data[:, idx, :]
-    # print(data.shape)
-    # 53 - components - data.shape[1]
+    if filter_indices:
+        # get correct indices/components
+        indices = pd.read_csv(indices_path, header=None)
+        idx = indices[0].values - 1
+        # filter the data: leave only correct components
+        data = data[:, idx, :]
+        # print(data.shape)
+        # 53 - components - data.shape[1]
 
     # get labels
     labels = pd.read_csv(labels_path, header=None)
@@ -64,6 +68,7 @@ def load_ABIDE1_869(
     ),
     indices_path: str = DATA_ROOT.joinpath("abide869/correct_indices_GSP.csv"),
     labels_path: str = DATA_ROOT.joinpath("abide869/labels_ABIDE1_869Subjects.csv"),
+    filter_indices: bool = True,
 ):
     """
     Return ABIDE1 data
@@ -75,6 +80,8 @@ def load_ABIDE1_869(
     - path to correct indices/components
     labels_path: str = DATA_ROOT.joinpath("abide/labels_ABIDE1.csv")
     - path to labels
+    filter_indices: bool = True
+    - whether ICA components should be filtered
 
     Output:
     features, labels
@@ -89,12 +96,13 @@ def load_ABIDE1_869(
     indices = pd.read_csv(indices_path, header=None)
     idx = indices[0].values - 1
 
-    # filter the data: leave only correct components and the first 156 time points
-    # (not all subjects have all 160 time points)
-    data = data[:, idx, :]
-    # print(data.shape)
-    # 53 - components - data.shape[1]
-    # 156 - time points - data.shape[2]
+    if filter_indices:
+        # filter the data: leave only correct components and the first 156 time points
+        # (not all subjects have all 160 time points)
+        data = data[:, idx, :]
+        # print(data.shape)
+        # 53 - components - data.shape[1]
+        # 156 - time points - data.shape[2]
 
     # get labels
     labels = pd.read_csv(labels_path, header=None)
@@ -107,6 +115,7 @@ def load_COBRE(
     dataset_path: str = DATA_ROOT.joinpath("cobre/COBRE_AllData.h5"),
     indices_path: str = DATA_ROOT.joinpath("cobre/correct_indices_GSP.csv"),
     labels_path: str = DATA_ROOT.joinpath("cobre/labels_COBRE.csv"),
+    filter_indices: bool = True,
 ):
     """
     Return COBRE data
@@ -118,6 +127,8 @@ def load_COBRE(
     - path to correct indices/components
     labels_path: str = DATA_ROOT.joinpath("cobre/labels_COBRE.csv")
     - path to labels
+    filter_indices: bool = True
+    - whether ICA components should be filtered
 
     Output:
     features, labels
@@ -138,13 +149,14 @@ def load_COBRE(
     # 100 - components - data.shape[1]
     # 140 - time points - data.shape[2]
 
-    # get correct indices/components
-    indices = pd.read_csv(indices_path, header=None)
-    idx = indices[0].values - 1
-    # filter the data: leave only correct components
-    data = data[:, idx, :]
-    # print(data.shape)
-    # 53 - components - data.shape[1]
+    if filter_indices:
+        # get correct indices/components
+        indices = pd.read_csv(indices_path, header=None)
+        idx = indices[0].values - 1
+        # filter the data: leave only correct components
+        data = data[:, idx, :]
+        # print(data.shape)
+        # 53 - components - data.shape[1]
 
     # get labels
     labels = pd.read_csv(labels_path, header=None)
@@ -157,6 +169,7 @@ def load_FBIRN(
     dataset_path: str = DATA_ROOT.joinpath("fbirn/FBIRN_AllData.h5"),
     indices_path: str = DATA_ROOT.joinpath("fbirn/correct_indices_GSP.csv"),
     labels_path: str = DATA_ROOT.joinpath("fbirn/labels_FBIRN_new.csv"),
+    filter_indices: bool = True,
 ):
     """
     Return FBIRN data
@@ -168,6 +181,8 @@ def load_FBIRN(
     - path to correct indices/components
     labels_path: str = DATA_ROOT.joinpath("fbirn/labels_FBIRN_new.csv")
     - path to labels
+    filter_indices: bool = True
+    - whether ICA components should be filtered
 
     Output:
     features, labels
@@ -188,13 +203,14 @@ def load_FBIRN(
     # 100 - components - data.shape[1]
     # 140 - time points - data.shape[2]
 
-    # get correct indices/components
-    indices = pd.read_csv(indices_path, header=None)
-    idx = indices[0].values - 1
-    # filter the data: leave only correct components
-    data = data[:, idx, :]
-    # print(data.shape)
-    # 53 - components - data.shape[1]
+    if filter_indices:
+        # get correct indices/components
+        indices = pd.read_csv(indices_path, header=None)
+        idx = indices[0].values - 1
+        # filter the data: leave only correct components
+        data = data[:, idx, :]
+        # print(data.shape)
+        # 53 - components - data.shape[1]
 
     # get labels
     labels = pd.read_csv(labels_path, header=None)
@@ -210,6 +226,7 @@ def load_OASIS(
     indices_path: str = DATA_ROOT.joinpath("oasis/correct_indices_GSP.csv"),
     labels_path: str = DATA_ROOT.joinpath("oasis/labels_OASIS_6_classes.csv"),
     sessions_path: str = DATA_ROOT.joinpath("oasis/oasis_first_sessions_index.csv"),
+    filter_indices: bool = True,
 ):
     """
     Return OASIS data
@@ -227,6 +244,8 @@ def load_OASIS(
     - path to labels
     sessions_path: str = DATA_ROOT.joinpath("oasis/oasis_first_sessions_index.csv")
     - path to indices of the first sessions
+    filter_indices: bool = True
+    - whether ICA components should be filtered
 
     Output:
     features, labels
@@ -237,16 +256,17 @@ def load_OASIS(
     # 100 - components - data.shape[1]
     # 160 - time points - data.shape[2]
 
-    # get correct indices/components
-    indices = pd.read_csv(indices_path, header=None)
-    idx = indices[0].values - 1
+    if filter_indices:
+        # get correct indices/components
+        indices = pd.read_csv(indices_path, header=None)
+        idx = indices[0].values - 1
 
-    # filter the data: leave only correct components and the first 156 time points
-    # (not all subjects have all 160 time points)
-    data = data[:, idx, :156]
-    # print(data.shape)
-    # 53 - components - data.shape[1]
-    # 156 - time points - data.shape[2]
+        # filter the data: leave only correct components and the first 156 time points
+        # (not all subjects have all 160 time points)
+        data = data[:, idx, :156]
+        # print(data.shape)
+        # 53 - components - data.shape[1]
+        # 156 - time points - data.shape[2]
 
     # get labels
     labels = pd.read_csv(labels_path, header=None)
@@ -278,50 +298,10 @@ def load_OASIS(
     return data, labels
 
 
-def load_balanced_OASIS():
-    """
-    Return 320 balanced OASIS subjects (classes 0 and 1 only)
-
-    Output:
-    features, labels
-    """
-
-    features, labels = load_OASIS(only_first_sessions=True, only_two_classes=True)
-
-    # for 651 subjects with label 0
-    filter_array_0 = []
-    # for 172 subjects with label 1
-    filter_array_1 = []
-
-    for label in labels:
-        if label == 0:
-            filter_array_0.append(True)
-            filter_array_1.append(False)
-        else:
-            filter_array_0.append(False)
-            filter_array_1.append(True)
-
-    # copy subjects to separate arrays
-    features_0 = features[filter_array_0]
-    labels_0 = labels[filter_array_0]
-    features_1 = features[filter_array_1]
-    labels_1 = labels[filter_array_1]
-
-    # balance the arrays
-    features_0 = features_0[:160]
-    labels_0 = labels_0[:160]
-    features_1 = features_1[:160]
-    labels_1 = labels_1[:160]
-
-    features = np.concatenate((features_0, features_1), axis=0)
-    labels = np.concatenate((labels_0, labels_1), axis=0)
-
-    return features, labels
-
-
 def load_UKB(
     dataset_path: str = "/data/users2/ppopov1/UKB_data/UKB_sex_data.npz",
     indices_path: str = "/data/users2/ppopov1/UKB_data/correct_indices_GSP.csv",
+    filter_indices: bool = True,
 ):
     """
     Return UKB data
@@ -331,7 +311,8 @@ def load_UKB(
     - path to the dataset with lablels
     indices_path: str = "/data/users2/ppopov1/UKB_data/correct_indices_GSP.csv"
     - path to correct indices/components
-
+    filter_indices: bool = True
+    - whether ICA components should be filtered
 
     Output:
     features, labels
@@ -343,10 +324,11 @@ def load_UKB(
         features = npzfile["features"]
         labels = npzfile["labels"]
 
-    # get correct indices/components
-    indices = pd.read_csv(indices_path, header=None)
-    idx = indices[0].values - 1
-    features = features[:, idx, :]
+    if filter_indices:
+        # get correct indices/components
+        indices = pd.read_csv(indices_path, header=None)
+        idx = indices[0].values - 1
+        features = features[:, idx, :]
 
     return features, labels
 
@@ -356,6 +338,7 @@ def load_BSNIP(
     invert_classes: bool = True,
     dataset_path: str = DATA_ROOT.joinpath("bsnip/BSNIP_data.npz"),
     indices_path: str = DATA_ROOT.joinpath("bsnip/correct_indices_GSP.csv"),
+    filter_indices: bool = True,
 ):
     """
     Return BSNIP data
@@ -365,7 +348,8 @@ def load_BSNIP(
     - path to the dataset with lablels
     indices_path: str = DATA_ROOT.joinpath("bsnip/correct_indices_GSP.csv")
     - path to correct indices/components
-
+    filter_indices: bool = True
+    - whether ICA components should be filtered
 
     Output:
     features, labels
@@ -377,10 +361,11 @@ def load_BSNIP(
         features = npzfile["features"]
         labels = npzfile["labels"]
 
-    # get correct indices/components
-    indices = pd.read_csv(indices_path, header=None)
-    idx = indices[0].values - 1
-    features = features[:, idx, :]
+    if filter_indices:
+        # get correct indices/components
+        indices = pd.read_csv(indices_path, header=None)
+        idx = indices[0].values - 1
+        features = features[:, idx, :]
 
     if only_two_classes:
         # leave subjects of class 0 and 1 only
@@ -408,32 +393,10 @@ def load_BSNIP(
     return features, labels
 
 
-class TSQuantileTransformer:
-    def __init__(self, *args, n_quantiles: int, **kwargs):
-        self.n_quantiles = n_quantiles
-        self._args = args
-        self._kwargs = kwargs
-        self.transforms = {}
-
-    def fit(self, features: np.ndarray):
-        for i in range(features.shape[1]):
-            self.transforms[i] = QuantileTransformer(
-                *self._args, n_quantiles=self.n_quantiles, **self._kwargs
-            ).fit(features[:, i, :])
-        return self
-
-    def transform(self, features: np.ndarray):
-        result = np.empty_like(features, dtype=np.int32)
-        for i in range(features.shape[1]):
-            result[:, i, :] = (
-                self.transforms[i].transform(features[:, i, :]) * self.n_quantiles
-            ).astype(np.int32)
-        return result
-
-
 def load_time_FBIRN(
     dataset_path: str = DATA_ROOT.joinpath("fbirn/FBIRN_AllData.h5"),
     indices_path: str = DATA_ROOT.joinpath("fbirn/correct_indices_GSP.csv"),
+    filter_indices: bool = True,
 ):
     """
     Return FBIRN normal + inversed time data
@@ -445,12 +408,14 @@ def load_time_FBIRN(
     - path to correct indices/components
     labels_path: str = DATA_ROOT.joinpath("fbirn/labels_FBIRN_new.csv")
     - path to labels
+    filter_indices: bool = True
+    - whether ICA components should be filtered
 
     Output:
     features, labels
     """
 
-    data, _ = load_FBIRN(dataset_path, indices_path)
+    data, _ = load_FBIRN(dataset_path, indices_path, filter_indices)
     inversed_data = np.flip(data, axis=2)
 
     labels = [0] * data.shape[0]
@@ -512,33 +477,45 @@ def load_ROI_FBIRN(
 
 
 def load_HCP(
-    dataset_path: str = DATA_ROOT.joinpath("hcp"),
+    dataset_path: str = DATA_ROOT.joinpath("hcp/HCP_AllData_sess1.npz"),
+    labels_path: str = DATA_ROOT.joinpath("hcp/labels_HCP_Gender"),
+    indices_path: str = DATA_ROOT.joinpath("hcp/correct_indices_GSP.csv"),
+    filter_indices: bool = True,
 ):
     """
     Return ICA HCP data
 
     Input:
-    dataset_path: str = DATA_ROOT.joinpath("hcp")
+    dataset_path: str = DATA_ROOT.joinpath("hcp/HCP_AllData_sess1.npz")
     - path to the dataset
+    labels_path: str = DATA_ROOT.joinpath("hcp/labels_HCP_Gender")
+    - path to labels
+    indices_path: str = DATA_ROOT.joinpath("hcp/correct_indices_GSP.csv")
+    - path to correct indices/components
+    filter_indices: bool = True
+    - whether ICA components should be filtered
 
     Output:
     features, labels
     """
 
-    final_dataset_path = dataset_path.joinpath("HCP_AllData_sess1.npz")
-
-    label_path = dataset_path.joinpath("labels_HCP_Gender.csv")
-
     # get data
-    data = np.load(final_dataset_path)
+    features = np.load(dataset_path)
     # print(data.shape)
     # >>> (833, 100, 1185)
 
-    labels = pd.read_csv(label_path, header=None)
+    if filter_indices:
+        # get correct indices/components
+        indices = pd.read_csv(indices_path, header=None)
+        idx = indices[0].values - 1
+        features = features[:, idx, :]
+        # >>> (833, 53, 1185)
+
+    labels = pd.read_csv(labels_path, header=None)
     labels = labels.values.flatten().astype("int")
     # (833,)
 
-    return data, labels
+    return features, labels
 
 
 def load_ROI_HCP(
@@ -618,26 +595,32 @@ def load_ROI_ABIDE(
     return data, labels
 
 
-def load_dataset(dataset: str):
+def load_dataset(dataset: str, filter_indices: bool = True):
     """
-    Return the dataset defined by type
+    Return the dataset defined by 'dataset'
+
+    dataset: str
+    - dataset name
+    filter_indices: bool = True
+    - whether ICA components should be filtered
     """
+
     if dataset == "oasis":
-        data, labels = load_OASIS()
+        data, labels = load_OASIS(filter_indices=filter_indices)
     elif dataset == "abide":
-        data, labels = load_ABIDE1()
+        data, labels = load_ABIDE1(filter_indices=filter_indices)
     elif dataset == "fbirn":
-        data, labels = load_FBIRN()
+        data, labels = load_FBIRN(filter_indices=filter_indices)
     elif dataset == "cobre":
-        data, labels = load_COBRE()
+        data, labels = load_COBRE(filter_indices=filter_indices)
     elif dataset == "abide_869":
-        data, labels = load_ABIDE1_869()
+        data, labels = load_ABIDE1_869(filter_indices=filter_indices)
     elif dataset == "ukb":
-        data, labels = load_UKB()
+        data, labels = load_UKB(filter_indices=filter_indices)
     elif dataset == "bsnip":
-        data, labels = load_BSNIP()
+        data, labels = load_BSNIP(filter_indices=filter_indices)
     elif dataset == "time_fbirn":
-        data, labels = load_time_FBIRN()
+        data, labels = load_time_FBIRN(filter_indices=filter_indices)
     elif dataset == "fbirn_100":
         data, labels = load_ROI_FBIRN(100)
     elif dataset == "fbirn_200":
@@ -647,7 +630,7 @@ def load_dataset(dataset: str):
     elif dataset == "fbirn_1000":
         data, labels = load_ROI_FBIRN(1000)
     elif dataset == "hcp":
-        data, labels = load_HCP()
+        data, labels = load_HCP(filter_indices=filter_indices)
     elif dataset == "hcp_roi":
         data, labels = load_ROI_HCP()
     elif dataset == "abide_roi":
