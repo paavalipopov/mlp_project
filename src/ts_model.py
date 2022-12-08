@@ -92,7 +92,7 @@ def get_config(exp: Experiment):
             model_config["input_size"] = exp.data_shape[2]
             model_config["output_size"] = exp.n_classes
         elif exp.model in ["transformer", "mean_transformer"]:
-            model_config["hidden_size"] = randint.rvs(4, 128)
+            model_config["head_hidden_size"] = randint.rvs(4, 128)
             model_config["num_heads"] = randint.rvs(1, 4)
             model_config["num_layers"] = randint.rvs(1, 4)
             model_config["fc_dropout"] = uniform.rvs(0.1, 0.9)
@@ -439,9 +439,11 @@ class Transformer(nn.Module):
         input_size = int(model_config["input_size"])
         output_size = int(model_config["output_size"])
         fc_dropout = float(model_config["fc_dropout"])
-        hidden_size = int(model_config["hidden_size"])
+        head_hidden_size = int(model_config["head_hidden_size"])
         num_layers = int(model_config["num_layers"])
         num_heads = int(model_config["num_heads"])
+
+        hidden_size = head_hidden_size * num_heads
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size, nhead=num_heads, batch_first=True
@@ -472,9 +474,11 @@ class MeanTransformer(nn.Module):
         input_size = int(model_config["input_size"])
         output_size = int(model_config["output_size"])
         fc_dropout = float(model_config["fc_dropout"])
-        hidden_size = int(model_config["hidden_size"])
+        head_hidden_size = int(model_config["head_hidden_size"])
         num_layers = int(model_config["num_layers"])
         num_heads = int(model_config["num_heads"])
+
+        hidden_size = head_hidden_size * num_heads
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size, nhead=num_heads, batch_first=True
