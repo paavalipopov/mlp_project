@@ -386,6 +386,7 @@ class Experiment(IExperiment):
         logpath = f"{self.config['runpath']}/_model.best.pth"
         checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
         self._model.load_state_dict(checkpoint)
+        self._model = self._model.to(self.device)
 
         self.dataset_key = "test"
         self.dataset = DataLoader(
