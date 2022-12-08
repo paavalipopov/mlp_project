@@ -130,6 +130,14 @@ class Experiment(IExperiment):
         with open(logfile, "w") as fp:
             json.dump(self.config, fp)
 
+        if torch.cuda.is_available():
+            dev = "cuda:0"
+        else:
+            dev = "cpu"
+
+        print(f"Used device: {dev}")
+        self.device = torch.device(dev)
+
     def acquire_params(self, path):
         """
         Used for extracting experiment set-up from the
@@ -246,6 +254,7 @@ class Experiment(IExperiment):
         self.config["batch_size"] = self.batch_size
 
         self._model = get_model(self.model, self.model_config)
+        self._model = self._model.to(self.device)
 
         self.criterion = get_criterion(self.model)
 
@@ -326,6 +335,8 @@ class Experiment(IExperiment):
 
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (data, target) in enumerate(tqdm(self.dataset)):
+                data, target = data.to(self.device), target.to(self.device)
+
                 self.optimizer.zero_grad()
                 logits = self._model(data)
                 loss = self.criterion(logits, target)
