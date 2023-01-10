@@ -185,7 +185,7 @@ class EncoderTrainer(IExperiment):
                     logits = torch.matmul(predictions, positive.t())
                     # print("logits1 shape: ", logits.size())
                     # print("torch.arange1 shape: ", torch.arange(N).size())
-                    step_loss = self.criterion(logits, torch.arange(N))
+                    step_loss = self.criterion(logits, torch.arange(N).to(self.device))
                     loss1 += step_loss
                 loss1 = loss1 / sx
 
