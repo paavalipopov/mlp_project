@@ -25,6 +25,7 @@ class EncoderTrainer(IExperiment):
         dataset: dict,
         logpath: str,
         wandb_logger: wandb.run,
+        device,
         batch_size: int = 32,
         max_epochs: int = 200,
     ) -> None:
@@ -42,6 +43,8 @@ class EncoderTrainer(IExperiment):
 
         self.batch_size = batch_size
         self.num_epochs = max_epochs
+
+        self.device = device
 
     def initialize_data(self):
         # prepare dataset for the encoder training
@@ -93,6 +96,9 @@ class EncoderTrainer(IExperiment):
         self.classifier2 = nn.Linear(
             self.encoder.local_layer_depth, self.encoder.local_layer_depth
         )  # local-local
+        self.encoder = self.encoder.to(self.device)
+        self.classifier1 = self.classifier1.to(self.device)
+        self.classifier2 = self.classifier2.to(self.device)
 
         self.criterion = nn.CrossEntropyLoss()
 
@@ -147,6 +153,8 @@ class EncoderTrainer(IExperiment):
 
         with torch.set_grad_enabled(self.is_train_dataset):
             for self.dataset_batch_step, (x_t, x_tprev) in enumerate(tqdm(self.dataset)):
+                x_t, x_tprev = x_t.to(self.device), x_tprev.to(self.device)
+
                 self.optimizer.zero_grad()
                 f_t_maps, f_t_prev_maps = (
                     self.encoder(x_t, fmaps=True),

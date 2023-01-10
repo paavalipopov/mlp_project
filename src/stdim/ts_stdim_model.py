@@ -111,6 +111,7 @@ def get_encoder(exp: STDIM_Experiment, encoder_config: dict):
             logpath=exp.config["runpath"],
             wandb_logger=exp.wandb_logger,
             batch_size=exp.batch_size,
+            device=exp.device,
         ).train_encoder()
         return encoder
     elif exp.pretraining == "FPT":
