@@ -50,6 +50,7 @@ class STDIM_Experiment(IExperiment):
         n_splits: int,
         n_trials: int,
         max_epochs: int,
+        batch_size: int,
     ) -> None:
         super().__init__()
         self.config = {}
