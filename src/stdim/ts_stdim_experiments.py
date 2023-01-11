@@ -71,6 +71,7 @@ class STDIM_Experiment(IExperiment):
                 n_splits,
                 n_trials,
                 max_epochs,
+                batch_size,
             ) = self.acquire_params(path)
 
         self.mode = self.config["mode"] = mode  # tune or experiment mode
@@ -106,6 +107,7 @@ class STDIM_Experiment(IExperiment):
         # num of trials for each fold
         self.n_trials = self.config["n_trials"] = n_trials
         self.max_epochs = self.config["max_epochs"] = max_epochs
+        self.batch_size = self.config["batch_size"] = batch_size
 
         # set project name prefix
         if len(prefix) == 0:
@@ -177,6 +179,7 @@ class STDIM_Experiment(IExperiment):
             config["n_splits"],
             config["n_trials"],
             config["max_epochs"],
+            config["batch_size"],
         )
 
     def initialize_data(self, dataset, for_test=False):
@@ -207,8 +210,7 @@ class STDIM_Experiment(IExperiment):
         from src.stdim.ts_stdim_model import get_config
 
         self.n_classes = np.unique(labels).shape[0]
-        self.batch_size, self.model_config = get_config(self, features.shape)
-        self.config["batch_size"] = self.batch_size
+        self.model_config = get_config(self, features.shape)
 
         # reshape data's time dimension into windows:
         subjects = features.shape[0]  # subjects
@@ -625,6 +627,12 @@ if __name__ == "__main__":
         help="Max number of epochs (min 30)",
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size (default: 32)",
+    )
+    parser.add_argument(
         "--num-trials",
         type=int,
         default=10,
@@ -649,4 +657,5 @@ if __name__ == "__main__":
         n_splits=args.num_splits,
         n_trials=args.num_trials,
         max_epochs=args.max_epochs,
+        batch_size=args.batch_size,
     ).start()

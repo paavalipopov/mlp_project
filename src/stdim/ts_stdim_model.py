@@ -13,7 +13,6 @@ from src.stdim.stdim_encoder_trainer import EncoderTrainer
 
 
 def get_config(exp: STDIM_Experiment, data_shape):
-    config = {}
     model_config = {}
 
     if exp.mode == "experiment":
@@ -34,12 +33,6 @@ def get_config(exp: STDIM_Experiment, data_shape):
         runs_file = sorted(runs_files)[-1]
         print(f"Using best model from {runs_file}")
 
-        # get general config
-        with open(f"{runs_file}/config.json", "r") as fp:
-            config = json.load(fp)
-        # the only thing needed from the general config is batch size
-        batch_size = config["batch_size"]
-
         # get model config: probe, encoder and dataset params
         df = pd.read_csv(f"{runs_file}/runs.csv", delimiter=",", index_col=False)
         # pick hyperparams of a model with the highest test_score
@@ -54,9 +47,6 @@ def get_config(exp: STDIM_Experiment, data_shape):
     elif exp.mode == "tune":
         # add the link to the wandb run
         model_config["link"] = exp.wandb_logger.get_url()
-        # set batch size
-        batch_size = randint.rvs(4, min(32, int(data_shape[0] / exp.n_splits) - 1))
-        # batch_size = 32
 
         # pick random model hyperparameters
 
@@ -99,7 +89,7 @@ def get_config(exp: STDIM_Experiment, data_shape):
     else:
         raise NotImplementedError()
 
-    return int(batch_size), model_config
+    return model_config
 
 
 def get_encoder(exp: STDIM_Experiment, encoder_config: dict):
