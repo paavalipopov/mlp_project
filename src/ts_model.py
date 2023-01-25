@@ -64,6 +64,7 @@ def get_config(exp: Experiment):
             "deep_mlp",
             "attention_mlp",
             "new_attention_mlp",
+            "meta_mlp",
         ]:
             model_config["hidden_size"] = randint.rvs(32, 256)
             model_config["num_layers"] = randint.rvs(0, 4)
@@ -91,7 +92,7 @@ def get_config(exp: Experiment):
 
             model_config["input_size"] = exp.data_shape[2]
             model_config["output_size"] = exp.n_classes
-        elif exp.model in ["transformer", "mean_transformer"]:
+        elif exp.model in ["transformer", "mean_transformer", "first_transformer"]:
             model_config["head_hidden_size"] = randint.rvs(4, 128)
             model_config["num_heads"] = randint.rvs(1, 4)
             model_config["num_layers"] = randint.rvs(1, 4)
@@ -99,6 +100,36 @@ def get_config(exp: Experiment):
 
             model_config["input_size"] = exp.data_shape[2]
             model_config["output_size"] = exp.n_classes
+        elif exp.model == "window_mlp":
+            model_config["input_size"] = exp.data_shape[2]
+            model_config["output_size"] = exp.n_classes
+
+            model_config["hidden_size"] = randint.rvs(32, 256)
+            model_config["num_layers"] = randint.rvs(0, 4)
+            model_config["dropout"] = uniform.rvs(0.1, 0.9)
+
+            model_config["decoder"] = {}
+            model_config["decoder"]["type"] = exp.model_decoder
+            if exp.model_decoder == "lstm":
+                model_config["decoder"]["hidden_size"] = randint.rvs(32, 256)
+                model_config["decoder"]["num_layers"] = randint.rvs(1, 4)
+                model_config["decoder"]["bidirectional"] = True
+            elif exp.model_decoder == "tf":
+                model_config["decoder"]["head_hidden_size"] = randint.rvs(4, 128)
+                model_config["decoder"]["num_heads"] = randint.rvs(1, 4)
+                model_config["decoder"]["num_layers"] = randint.rvs(1, 4)
+
+            model_config["mode"] = exp.model_mode
+
+            model_config["datashape"] = {}
+            model_config["datashape"]["window_size"] = randint.rvs(
+                5,
+                exp.data_shape[1] // 5,
+            )
+            # window shift determines how much the windows overlap
+            model_config["datashape"]["window_shift"] = randint.rvs(
+                2, model_config["datashape"]["window_size"]
+            )
 
         else:
             raise NotImplementedError()
@@ -115,6 +146,10 @@ def get_model(model, model_config):
         return AttentionMLP(model_config)
     elif model == "new_attention_mlp":
         return NewAttentionMLP(model_config)
+    elif model == "meta_mlp":
+        return MetaMLP(model_config)
+    elif model == "window_mlp":
+        return WindowMLP(model_config)
 
     elif model == "lstm":
         return LSTM(model_config)
@@ -125,6 +160,8 @@ def get_model(model, model_config):
         return Transformer(model_config)
     elif model == "mean_transformer":
         return MeanTransformer(model_config)
+    elif model == "first_transformer":
+        return First_Transformer(model_config)
 
     raise NotImplementedError()
 
@@ -200,6 +237,186 @@ class MLP(nn.Module):
         fc_output = fc_output.view(bs, ln, -1)
         logits = fc_output.mean(1)
         return logits
+
+
+class MetaMLP(nn.Module):
+    def __init__(self, model_config):
+        super(MetaMLP, self).__init__()
+
+        input_size = int(model_config["input_size"])
+        output_size = int(model_config["output_size"])
+        dropout = float(model_config["dropout"])
+        hidden_size = int(model_config["hidden_size"])
+        num_layers = int(model_config["num_layers"])
+
+        layers = [
+            nn.LayerNorm(input_size),
+            nn.Dropout(p=dropout),
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+        ]
+        for _ in range(num_layers):
+            layers.append(
+                ResidualBlock(
+                    nn.Sequential(
+                        nn.LayerNorm(hidden_size),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(hidden_size, hidden_size),
+                        nn.ReLU(),
+                    )
+                )
+            )
+
+        self.fc = nn.Sequential(*layers)
+        self.decoder = nn.Sequential(
+            nn.LayerNorm(hidden_size),
+            nn.Dropout(p=dropout),
+            nn.Linear(hidden_size, output_size),
+        )
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
+        fc_output = self.fc(x.view(-1, fs))
+        fc_output = fc_output.view(bs, ln, -1)
+        fc_output = fc_output.mean(1)
+        logits = self.decoder(fc_output)
+        return logits
+
+
+class WindowMLP(nn.Module):
+    def __init__(self, model_config):
+        super(WindowMLP, self).__init__()
+
+        # unpack config
+        self.mode = model_config["mode"]
+
+        input_size = int(model_config["input_size"])
+        output_size = int(model_config["output_size"])
+        dropout = float(model_config["dropout"])
+        hidden_size = int(model_config["hidden_size"])
+        num_layers = int(model_config["num_layers"])
+
+        self.decoder_type = model_config["decoder"]["type"]
+        if self.decoder_type == "lstm":
+            self.dec_hidden_size = model_config["decoder"]["hidden_size"]
+            dec_num_layers = model_config["decoder"]["num_layers"]
+            self.bidirectional = model_config["decoder"]["bidirectional"]
+        elif self.decoder_type == "tf":
+            dec_head_hidden_size = model_config["decoder"]["head_hidden_size"]
+            dec_num_heads = model_config["decoder"]["num_heads"]
+            dec_num_layers = model_config["decoder"]["num_layers"]
+        else:
+            raise NotImplementedError()
+
+        # initialize MLP
+        layers = [
+            nn.LayerNorm(input_size),
+            nn.Dropout(p=dropout),
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+        ]
+        for _ in range(num_layers):
+            layers.append(
+                ResidualBlock(
+                    nn.Sequential(
+                        nn.LayerNorm(hidden_size),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(hidden_size, hidden_size),
+                        nn.ReLU(),
+                    )
+                )
+            )
+
+        self.fc = nn.Sequential(*layers)
+
+        # initialize decoder
+        if self.decoder_type == "lstm":
+            self.decoder = nn.LSTM(
+                input_size=hidden_size,
+                hidden_size=self.dec_hidden_size,
+                num_layers=dec_num_layers,
+                batch_first=True,
+                bidirectional=self.bidirectional,
+            )
+            self.fc_out = nn.Sequential(
+                nn.Dropout(p=dropout),
+                nn.Linear(
+                    2 * self.dec_hidden_size
+                    if self.bidirectional
+                    else self.dec_hidden_size,
+                    output_size,
+                ),
+            )
+        elif self.decoder_type == "tf":
+            dec_hidden_size = dec_head_hidden_size * dec_num_heads
+
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=dec_hidden_size, nhead=dec_num_heads, batch_first=True
+            )
+            transformer_encoder = nn.TransformerEncoder(
+                encoder_layer, num_layers=num_layers
+            )
+            dec_layers = [
+                nn.Linear(hidden_size, dec_hidden_size),
+                nn.ReLU(),
+                transformer_encoder,
+            ]
+            self.decoder = nn.Sequential(*dec_layers)
+            self.fc_out = nn.Sequential(
+                nn.Dropout(p=dropout), nn.Linear(dec_hidden_size, output_size)
+            )
+
+        # set raw decoder for pretrained MLP
+        if self.mode in ["FPT", "UFPT"]:
+            self.raw_decoder = nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Dropout(p=dropout),
+                nn.Linear(hidden_size, output_size),
+            )
+        else:
+            if self.mode != "NPT":
+                raise NotImplementedError()
+
+    def forward(self, x):
+        bs, wn, ln, fs = x.shape
+        # bs:  batch size
+        # ws:  number of windows
+        # ln:  window time length
+        # fs:  number of channels, 53
+
+        # in case of not-pretrained MLP the final model is trained from scratch
+        if self.mode == "NPT":
+            fc_output = self.fc(x.view(-1, fs))
+            fc_output = fc_output.view(bs, wn, ln, -1)
+            fc_output = fc_output.mean(2)
+
+            if self.decoder_type == "lstm":
+                lstm_output, _ = self.decoder(fc_output)
+
+                if self.bidirectional:
+                    out_forward = lstm_output[:, -1, : self.dec_hidden_size]
+                    out_reverse = lstm_output[:, 0, self.dec_hidden_size :]
+                    lstm_output = torch.cat((out_forward, out_reverse), 1)
+                else:
+                    lstm_output = lstm_output[:, -1, :]
+
+                logits = self.fc_out(lstm_output)
+
+            elif self.decoder_type == "tf":
+                tf_output = self.decoder(fc_output)
+                tf_output = tf_output[:, -1, :]
+                logits = self.fc_out(tf_output)
+
+            return logits
+
+        # in case of pretrained MLP, in phase 1 MLP is pretrained,
+        # in phase 2 the decoder (in case of FPT) or MLP+decoder (in case of UFPT) is trained
+        # NOTE: trained params are set externally in the optimizer
+        if self.mode in ["FPT", "UFPT"]:
+            raise NotImplementedError()
 
 
 class AttentionMLP(nn.Module):
@@ -463,6 +680,41 @@ class Transformer(nn.Module):
         # x.shape = [Batch_size; time_len; n_channels]
         fc_output = self.transformer(x)
         fc_output = fc_output[:, -1, :]
+        fc_output = self.fc(fc_output)
+        return fc_output
+
+
+class First_Transformer(nn.Module):
+    def __init__(self, model_config):
+        super(First_Transformer, self).__init__()
+
+        input_size = int(model_config["input_size"])
+        output_size = int(model_config["output_size"])
+        fc_dropout = float(model_config["fc_dropout"])
+        head_hidden_size = int(model_config["head_hidden_size"])
+        num_layers = int(model_config["num_layers"])
+        num_heads = int(model_config["num_heads"])
+
+        hidden_size = head_hidden_size * num_heads
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size, nhead=num_heads, batch_first=True
+        )
+        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        layers = [
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            transformer_encoder,
+        ]
+        self.transformer = nn.Sequential(*layers)
+        self.fc = nn.Sequential(
+            nn.Dropout(p=fc_dropout), nn.Linear(hidden_size, output_size)
+        )
+
+    def forward(self, x):
+        # x.shape = [Batch_size; time_len; n_channels]
+        fc_output = self.transformer(x)
+        fc_output = fc_output[:, 0, :]
         fc_output = self.fc(fc_output)
         return fc_output
 

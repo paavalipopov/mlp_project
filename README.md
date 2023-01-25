@@ -48,6 +48,7 @@ done
     - `mean_transformer`
 - `--ds`: dataset for the experiments
     - `oasis`
+    - `adni`
     - `cobre`
     - `bsnip`
 
@@ -103,3 +104,11 @@ done
 
 ## Running ST-DIM experiment
 `PYTHONPATH=./ python src/stdim/ts_stdim_experiments.py --mode tune --ds fbirn --max-epochs 200`
+
+## Running Window MLP experiment
+`PYTHONPATH=./ python src/scripts/window_mlp_experiments.py --mode tune --model window_mlp --model-mode NPT --model-decoder lstm --ds fbirn --max-epochs 200 --num-trials 10 --prefix test`
+
+PYTHONPATH=./ python src/scripts/window_mlp_experiments.py --mode tune --model window_mlp --model-mode NPT --model-decoder lstm --ds fbirn --max-epochs 200 --num-trials 10 --prefix test;
+PYTHONPATH=./ python src/scripts/window_mlp_experiments.py --mode experiment --model window_mlp --model-mode NPT --model-decoder lstm --ds fbirn --max-epochs 200 --num-trials 10 --prefix test;
+PYTHONPATH=./ python src/scripts/window_mlp_experiments.py --mode tune --model window_mlp --model-mode NPT --model-decoder tf --ds fbirn --max-epochs 200 --num-trials 10 --prefix test;
+PYTHONPATH=./ python src/scripts/window_mlp_experiments.py --mode experiment --model window_mlp --model-mode NPT --model-decoder tf --ds fbirn --max-epochs 200 --num-trials 10 --prefix test

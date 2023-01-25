@@ -393,6 +393,66 @@ def load_BSNIP(
     return features, labels
 
 
+def load_ADNI(
+    only_two_classes: bool = True,
+    # invert_classes: bool = True,
+    dataset_path: str = DATA_ROOT.joinpath("adni/ADNI_data.npz"),
+    indices_path: str = DATA_ROOT.joinpath("adni/correct_indices_GSP.csv"),
+    filter_indices: bool = True,
+):
+    """
+    Return ADNI data
+
+    Input:
+    dataset_path: str = DATA_ROOT.joinpath("adni/ADNI_data.npz")
+    - path to the dataset with lablels
+    indices_path: str = DATA_ROOT.joinpath("adni/correct_indices_GSP.csv")
+    - path to correct indices/components
+    filter_indices: bool = True
+    - whether ICA components should be filtered
+
+    Output:
+    features, labels
+    """
+
+    features = None
+    labels = None
+    with np.load(dataset_path) as npzfile:
+        features = npzfile["features"]
+        labels = npzfile["diagnoses"]
+
+    if filter_indices:
+        # get correct indices/components
+        indices = pd.read_csv(indices_path, header=None)
+        idx = indices[0].values - 1
+        features = features[:, idx, :156]
+
+    if only_two_classes:
+        # leave subjects of class 0 and 1 only
+        # {"NC": 0, "SZ": 1, "SAD": 2, "BP": 3, "BPnon": 4, "OTH": 5}
+        filter_array = []
+        for label in labels:
+            if label in (0, 1):
+                filter_array.append(True)
+            else:
+                filter_array.append(False)
+
+        features = features[filter_array, :, :]
+        labels = labels[filter_array]
+
+    # if only_two_classes and invert_classes:
+    #     new_labels = []
+    #     for label in labels:
+    #         if label == 0:
+    #             new_labels.append(1)
+    #         else:
+    #             new_labels.append(0)
+
+    #     labels = np.array(new_labels)
+
+    return features, labels
+
+
 def load_time_FBIRN(
     dataset_path: str = DATA_ROOT.joinpath("fbirn/FBIRN_AllData.h5"),
     indices_path: str = DATA_ROOT.joinpath("fbirn/correct_indices_GSP.csv"),
@@ -607,6 +667,8 @@ def load_dataset(dataset: str, filter_indices: bool = True):
 
     if dataset == "oasis":
         data, labels = load_OASIS(filter_indices=filter_indices)
+    if dataset == "adni":
+        data, labels = load_ADNI(filter_indices=filter_indices)
     elif dataset == "abide":
         data, labels = load_ABIDE1(filter_indices=filter_indices)
     elif dataset == "fbirn":

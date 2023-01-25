@@ -43,6 +43,8 @@ class Experiment(IExperiment):
         mode: str,
         path: str,
         model: str,
+        model_mode: str,
+        model_decoder: str,
         dataset: str,
         scaled: bool,
         test_datasets: list,
@@ -76,6 +78,12 @@ class Experiment(IExperiment):
 
         self.mode = self.config["mode"] = mode  # tune or experiment mode
         self.model = self.config["model"] = model  # model name
+        self.model_mode = self.config[
+            "model_mode"
+        ] = model_mode  # model mode: NPT, FPT, UFPT
+        self.model_decoder = self.config[
+            "model_decoder"
+        ] = model_decoder  # model decoder: LSTM or TF
         # main dataset name (used for training)
         self.dataset_name = self.config["dataset"] = dataset
         # if dataset should be scaled by sklearn's StandardScaler
@@ -114,7 +122,7 @@ class Experiment(IExperiment):
             self.project_prefix = prefix.replace("-", "_")
         self.config["prefix"] = self.project_prefix
 
-        self.project_name = f"{self.mode}-{self.model}-{self.dataset_name}"
+        self.project_name = f"{self.mode}-{self.model}_{self.model_decoder}_{self.model_mode}-{self.dataset_name}"
         if self._scaled:
             self.project_name = f"{self.mode}-{self.model}-scaled_{self.dataset_name}"
         if len(self.test_datasets) != 0:
@@ -139,6 +147,9 @@ class Experiment(IExperiment):
 
         print(f"Used device: {dev}")
         self.device = torch.device(dev)
+
+        # init data
+        self.initialize_data(self.dataset_name)
 
     def acquire_params(self, path):
         """
@@ -208,10 +219,39 @@ class Experiment(IExperiment):
                 torch.tensor(labels, dtype=torch.int64),
             )
 
+        self.features = features
+        self.labels = labels
+
         self.data_shape = features.shape  # [n_features; time_len; n_channels;]
         self.n_classes = np.unique(labels).shape[0]
+        print("raw data shape: ", self.data_shape)
 
-        print("data shape: ", self.data_shape)
+    def initialize_dataset(self):
+        features = self.features.copy()  # [n_features; time_len; n_channels;]
+        labels = self.labels.copy()
+
+        # reshape data's time dimension into windows:
+        subjects = features.shape[0]  # subjects
+        tc = features.shape[1]  # original time length
+        # window x dim, or channels
+        sample_x = features.shape[2]
+        # window y dim, or window time
+        sample_y = self.model_config["datashape"]["window_size"]
+        # windows shift - how much windows overlap
+        window_shift = self.model_config["datashape"]["window_shift"]
+        # number of windows, or new time
+        samples_per_subject = tc // window_shift - (sample_y // window_shift + 1)
+
+        reshaped_features = np.zeros((subjects, samples_per_subject, sample_y, sample_x))
+        for i in range(subjects):
+            for j in range(samples_per_subject):
+                reshaped_features[i, j, :, :] = features[
+                    i, (j * window_shift) : (j * window_shift) + sample_y, :
+                ]
+
+        features = reshaped_features
+        # of shape [subjects, samples_per_subject, sample_y, sample_x]
+
         # train-val/test split
         skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
         skf.get_n_splits(features, labels)
@@ -253,7 +293,6 @@ class Experiment(IExperiment):
         )
 
         _, self.model_config = get_config(self)
-        self.config["batch_size"] = self.batch_size
 
         self._model = get_model(self.model, self.model_config)
         self._model = self._model.to(self.device)
@@ -278,11 +317,11 @@ class Experiment(IExperiment):
             save_code=True,
         )
 
-        # init data
-        self.initialize_data(self.dataset_name)
-
         # init model
         self.initialize_model()
+
+        # init dataset
+        self.initialize_dataset()
 
         # setup data loaders
         self.datasets = {
@@ -320,8 +359,8 @@ class Experiment(IExperiment):
 
         self.num_epochs = self.max_epochs
 
-        self.wandb_logger.config.update(self.config)
-        self.wandb_logger.config.update(self.model_config)
+        self.wandb_logger.config.update({"general": self.config})
+        self.wandb_logger.config.update({"model": self.model_config})
 
         # update saved config
         with open(f"{self.logdir}/config.json", "w") as fp:
@@ -495,27 +534,37 @@ if __name__ == "__main__":
         "--model",
         type=str,
         choices=[
-            "mlp",
-            "wide_mlp",
-            "deep_mlp",
-            "attention_mlp",
-            "new_attention_mlp",
-            "meta_mlp",
-            "lstm",
-            "noah_lstm",
-            "transformer",
-            "mean_transformer",
-            "first_transformer",
+            "window_mlp",
+        ],
+        default="window_mlp",
+        help="Name of the model to run",
+    )
+    parser.add_argument(
+        "--model-mode",
+        type=str,
+        choices=[
+            "NPT",
+            "FPT",
+            "UFPT",
         ],
         required=not for_continue,
-        help="Name of the model to run",
+        help="Training mode of the model",
+    )
+    parser.add_argument(
+        "--model-decoder",
+        type=str,
+        choices=[
+            "lstm",
+            "tf",
+        ],
+        required=not for_continue,
+        help="Decoder type for window_mlp",
     )
     parser.add_argument(
         "--ds",
         type=str,
         choices=[
             "oasis",
-            "adni",
             "abide",
             "fbirn",
             "cobre",
@@ -541,7 +590,6 @@ if __name__ == "__main__":
         type=str,
         choices=[
             "oasis",
-            "adni",
             "abide",
             "fbirn",
             "cobre",
@@ -601,6 +649,8 @@ if __name__ == "__main__":
         mode=args.mode,
         path=args.path,
         model=args.model,
+        model_mode=args.model_mode,
+        model_decoder=args.model_decoder,
         dataset=args.ds,
         scaled=args.scaled,
         test_datasets=args.test_ds,
