@@ -44,6 +44,7 @@ class Experiment(IExperiment):
         path: str,
         model: str,
         dataset: str,
+        multiclass: bool,
         scaled: bool,
         test_datasets: list,
         prefix: str,
@@ -66,6 +67,7 @@ class Experiment(IExperiment):
                 mode,
                 model,
                 dataset,
+                multiclass,
                 scaled,
                 test_datasets,
                 prefix,
@@ -79,6 +81,7 @@ class Experiment(IExperiment):
         # main dataset name (used for training)
         self.dataset_name = self.config["dataset"] = dataset
         # if dataset should be scaled by sklearn's StandardScaler
+        self.multiclass = multiclass
         self._scaled = self.config["scaled"] = scaled
 
         if test_datasets is None:  # additional test datasets
@@ -114,9 +117,12 @@ class Experiment(IExperiment):
             self.project_prefix = prefix.replace("-", "_")
         self.config["prefix"] = self.project_prefix
 
-        self.project_name = f"{self.mode}-{self.model}-{self.dataset_name}"
+        proj_dataset_name = self.dataset_name
+        if self.multiclass:
+            proj_dataset_name = f"multiclass_{proj_dataset_name}"
         if self._scaled:
-            self.project_name = f"{self.mode}-{self.model}-scaled_{self.dataset_name}"
+            proj_dataset_name = f"scaled_{proj_dataset_name}"
+        self.project_name = f"{self.mode}-{self.model}-{proj_dataset_name}"
         if len(self.test_datasets) != 0:
             project_ending = "-tests-" + "_".join(self.test_datasets)
             self.project_name += project_ending
@@ -170,6 +176,7 @@ class Experiment(IExperiment):
             config["mode"],
             config["model"],
             config["dataset"],
+            config["multiclass"],
             config["scaled"],
             config["test_datasets"],
             config["prefix"],
@@ -182,7 +189,7 @@ class Experiment(IExperiment):
         # load core dataset (or additional datasets if for_test==True)
         # your dataset should have shape [n_features; n_channels; time_len]
 
-        features, labels = load_dataset(dataset)
+        features, labels = load_dataset(dataset, self.multiclass)
         features = np.swapaxes(features, 1, 2)  # [n_features; time_len; n_channels;]
 
         if self._scaled:
@@ -547,6 +554,7 @@ if __name__ == "__main__":
             "cobre",
             "abide_869",
             "ukb",
+            "ukb_age_bins",
             "bsnip",
             "time_fbirn",
             "fbirn_100",
@@ -559,6 +567,10 @@ if __name__ == "__main__":
         ],
         help="Additional datasets for testing",
     )
+
+    # oasis, bsnip, adni and ukb_age_bins have multiple classes;
+    # ukb_age_bins is ukb age dataset with ages splitted into bins
+    boolean_flag(parser, "multiclass", default=False)
 
     parser.add_argument(
         "--prefix",
@@ -602,6 +614,7 @@ if __name__ == "__main__":
         path=args.path,
         model=args.model,
         dataset=args.ds,
+        multiclass=args.multiclass,
         scaled=args.scaled,
         test_datasets=args.test_ds,
         prefix=args.prefix,
