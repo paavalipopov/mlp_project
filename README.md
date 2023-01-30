@@ -112,3 +112,8 @@ PYTHONPATH=./ python src/scripts/window_mlp_experiments.py --mode tune --model w
 PYTHONPATH=./ python src/scripts/window_mlp_experiments.py --mode experiment --model window_mlp --model-mode NPT --model-decoder lstm --ds fbirn --max-epochs 200 --num-trials 10 --prefix test;
 PYTHONPATH=./ python src/scripts/window_mlp_experiments.py --mode tune --model window_mlp --model-mode NPT --model-decoder tf --ds fbirn --max-epochs 200 --num-trials 10 --prefix test;
 PYTHONPATH=./ python src/scripts/window_mlp_experiments.py --mode experiment --model window_mlp --model-mode NPT --model-decoder tf --ds fbirn --max-epochs 200 --num-trials 10 --prefix test
+
+PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode tune --model pe_transformer --ds fbirn --max-epochs 200 --num-trials 10;
+PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode experiment --model pe_transformer --ds fbirn --max-epochs 200 --num-trials 10;
+PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode tune --model pe_mlp --ds fbirn --max-epochs 200 --num-trials 10;
+PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode experiment --model pe_mlp --ds fbirn --max-epochs 200 --num-trials 10;

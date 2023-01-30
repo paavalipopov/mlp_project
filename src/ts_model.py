@@ -2,6 +2,7 @@
 """Models for experiments and functions for setting them up"""
 import os
 import json
+import numpy as np
 import pandas as pd
 import torch
 from torch import nn, optim
@@ -65,6 +66,7 @@ def get_config(exp: Experiment):
             "attention_mlp",
             "new_attention_mlp",
             "meta_mlp",
+            "pe_mlp",
         ]:
             model_config["hidden_size"] = randint.rvs(32, 256)
             model_config["num_layers"] = randint.rvs(0, 4)
@@ -92,7 +94,12 @@ def get_config(exp: Experiment):
 
             model_config["input_size"] = exp.data_shape[2]
             model_config["output_size"] = exp.n_classes
-        elif exp.model in ["transformer", "mean_transformer", "first_transformer"]:
+        elif exp.model in [
+            "transformer",
+            "mean_transformer",
+            "first_transformer",
+            "pe_transformer",
+        ]:
             model_config["head_hidden_size"] = randint.rvs(4, 128)
             model_config["num_heads"] = randint.rvs(1, 4)
             model_config["num_layers"] = randint.rvs(1, 4)
@@ -150,10 +157,12 @@ def get_model(model, model_config):
         return MetaMLP(model_config)
     elif model == "window_mlp":
         return WindowMLP(model_config)
+    elif model == "pe_mlp":
+        return PE_MLP(model_config)
 
     elif model == "lstm":
         return LSTM(model_config)
-    elif model in "noah_lstm":
+    elif model == "noah_lstm":
         return NoahLSTM(model_config)
 
     elif model == "transformer":
@@ -162,6 +171,8 @@ def get_model(model, model_config):
         return MeanTransformer(model_config)
     elif model == "first_transformer":
         return First_Transformer(model_config)
+    elif model == "pe_transformer":
+        return PE_Transformer(model_config)
 
     raise NotImplementedError()
 
@@ -180,6 +191,26 @@ def get_optimizer(exp: Experiment, model_config):
     )
 
     return model_config["lr"], optimizer
+
+
+def positional_encoding(x, n=10000):
+    bs, ln, fs = x.shape
+    # bs: batch size
+    # ln: length in time
+    # fs: number of channels
+
+    P = np.zeros((bs, ln, fs))
+    for k in range(ln):
+        for i in np.arange(int(fs / 2)):
+            denominator = np.power(n, 2 * i / fs)
+            P[:, k, 2 * i] = np.ones((bs)) * np.sin(k / denominator)
+            P[:, k, 2 * i + 1] = np.ones((bs)) * np.cos(k / denominator)
+        if fs % 2 == 1:
+            i = int(fs / 2)
+            denominator = np.power(n, 2 * i / fs)
+            P[:, k, 2 * i] = np.ones((bs)) * np.sin(k / denominator)
+
+    return x + torch.tensor(P, dtype=torch.float32)
 
 
 class ResidualBlock(nn.Module):
@@ -233,6 +264,55 @@ class MLP(nn.Module):
         # bs:  batch size
         # ln:  length in time, 295
         # fs: number of channels, 53
+        fc_output = self.fc(x.view(-1, fs))
+        fc_output = fc_output.view(bs, ln, -1)
+        logits = fc_output.mean(1)
+        return logits
+
+
+class PE_MLP(nn.Module):
+    def __init__(self, model_config):
+        super(PE_MLP, self).__init__()
+
+        input_size = int(model_config["input_size"])
+        output_size = int(model_config["output_size"])
+        dropout = float(model_config["dropout"])
+        hidden_size = int(model_config["hidden_size"])
+        num_layers = int(model_config["num_layers"])
+
+        layers = [
+            nn.LayerNorm(input_size),
+            nn.Dropout(p=dropout),
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+        ]
+        for _ in range(num_layers):
+            layers.append(
+                ResidualBlock(
+                    nn.Sequential(
+                        nn.LayerNorm(hidden_size),
+                        nn.Dropout(p=dropout),
+                        nn.Linear(hidden_size, hidden_size),
+                        nn.ReLU(),
+                    )
+                )
+            )
+        layers.append(
+            nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Dropout(p=dropout),
+                nn.Linear(hidden_size, output_size),
+            )
+        )
+
+        self.fc = nn.Sequential(*layers)
+
+    def forward(self, x):
+        bs, ln, fs = x.shape
+        # bs:  batch size
+        # ln:  length in time, 295
+        # fs: number of channels, 53
+        x = positional_encoding(x)
         fc_output = self.fc(x.view(-1, fs))
         fc_output = fc_output.view(bs, ln, -1)
         logits = fc_output.mean(1)
@@ -750,5 +830,41 @@ class MeanTransformer(nn.Module):
         # x.shape = [Batch_size; time_len; n_channels]
         fc_output = self.transformer(x)
         fc_output = torch.mean(fc_output, 1)
+        fc_output = self.fc(fc_output)
+        return fc_output
+
+
+class PE_Transformer(nn.Module):
+    def __init__(self, model_config):
+        super(PE_Transformer, self).__init__()
+
+        input_size = int(model_config["input_size"])
+        output_size = int(model_config["output_size"])
+        fc_dropout = float(model_config["fc_dropout"])
+        head_hidden_size = int(model_config["head_hidden_size"])
+        num_layers = int(model_config["num_layers"])
+        num_heads = int(model_config["num_heads"])
+
+        hidden_size = head_hidden_size * num_heads
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size, nhead=num_heads, batch_first=True
+        )
+        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        layers = [
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            transformer_encoder,
+        ]
+        self.transformer = nn.Sequential(*layers)
+        self.fc = nn.Sequential(
+            nn.Dropout(p=fc_dropout), nn.Linear(hidden_size, output_size)
+        )
+
+    def forward(self, x):
+        # x.shape = [Batch_size; time_len; n_channels]
+        x = positional_encoding(x)
+        fc_output = self.transformer(x)
+        fc_output = fc_output[:, 0, :]
         fc_output = self.fc(fc_output)
         return fc_output
