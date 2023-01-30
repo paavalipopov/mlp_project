@@ -326,17 +326,17 @@ def load_OASIS(
 
 
 def load_UKB(
-    dataset_path: str = "/data/users2/ppopov1/UKB_data/UKB_sex_data.npz",
-    indices_path: str = "/data/users2/ppopov1/UKB_data/correct_indices_GSP.csv",
+    dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_sex_data.npz",
+    indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv",
     filter_indices: bool = True,
 ):
     """
     Return UKB data
 
     Input:
-    dataset_path: str = "/data/users2/ppopov1/UKB_data/UKB_sex_data.npz"
+    dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_sex_data.npz"
     - path to the dataset with lablels
-    indices_path: str = "/data/users2/ppopov1/UKB_data/correct_indices_GSP.csv"
+    indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv"
     - path to correct indices/components
     filter_indices: bool = True
     - whether ICA components should be filtered
@@ -361,17 +361,17 @@ def load_UKB(
 
 
 def load_UKB_age(
-    dataset_path: str = "/data/users2/ppopov1/UKB_data/UKB_age_data.npz",
-    indices_path: str = "/data/users2/ppopov1/UKB_data/correct_indices_GSP.csv",
+    dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_age_data.npz",
+    indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv",
     filter_indices: bool = True,
 ):
     """
     Return UKB age data,
 
     Input:
-    dataset_path: str = "/data/users2/ppopov1/UKB_data/UKB_age_data.npz"
+    dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_age_data.npz"
     - path to the dataset with lablels
-    indices_path: str = "/data/users2/ppopov1/UKB_data/correct_indices_GSP.csv"
+    indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv"
     - path to correct indices/components
     filter_indices: bool = True
     - whether ICA components should be filtered
@@ -396,17 +396,17 @@ def load_UKB_age(
 
 
 def load_UKB_age_bins(
-    dataset_path: str = "/data/users2/ppopov1/UKB_data/UKB_age_data.npz",
-    indices_path: str = "/data/users2/ppopov1/UKB_data/correct_indices_GSP.csv",
+    dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_age_data.npz",
+    indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv",
     filter_indices: bool = True,
 ):
     """
     Return UKB age data, with ages split into bins (effectively classification labels)
 
     Input:
-    dataset_path: str = "/data/users2/ppopov1/UKB_data/UKB_age_data.npz"
+    dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_age_data.npz"
     - path to the dataset with lablels
-    indices_path: str = "/data/users2/ppopov1/UKB_data/correct_indices_GSP.csv"
+    indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv"
     - path to correct indices/components
     filter_indices: bool = True
     - whether ICA components should be filtered

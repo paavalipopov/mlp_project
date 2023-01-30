@@ -530,6 +530,7 @@ if __name__ == "__main__":
             "cobre",
             "abide_869",
             "ukb",
+            "ukb_age_bins",
             "bsnip",
             "time_fbirn",
             "fbirn_100",
