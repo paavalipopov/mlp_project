@@ -233,7 +233,13 @@ def positional_encoding(x, n=10000, scaled: bool = True):
             denominator = np.power(n, 2 * i / fs)
             P[:, k, 2 * i] = np.ones((bs)) * np.sin(k / denominator)
 
-    return C * x + torch.tensor(P, dtype=torch.float32)
+    if torch.cuda.is_available():
+        dev = "cuda:0"
+    else:
+        dev = "cpu"
+    device = torch.device(dev)
+
+    return C * x + torch.tensor(P, dtype=torch.float32).to(device)
 
 
 class ResidualBlock(nn.Module):
@@ -1028,12 +1034,13 @@ class PE_Transformer(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size, nhead=num_heads, batch_first=True
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-
-        self.input_embed = nn.Sequential(
+        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        layers = [
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
-        )
+            transformer_encoder,
+        ]
+        self.transformer = nn.Sequential(*layers)
 
         self.fc = nn.Sequential(
             nn.Dropout(p=fc_dropout), nn.Linear(hidden_size, output_size)
@@ -1042,9 +1049,8 @@ class PE_Transformer(nn.Module):
     def forward(self, x):
         # x.shape = [Batch_size; time_len; n_channels]
         x = positional_encoding(x, scaled=False)
-        input_embed = self.input_embed(x)
 
-        tf_output = self.transformer(input_embed)
+        tf_output = self.transformer(x)
         tf_output = tf_output[:, 0, :]
 
         fc_output = self.fc(tf_output)
