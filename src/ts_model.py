@@ -1,9 +1,6 @@
 # pylint: disable=C0115,C0103,C0116,R1725,R0913
 """Models for experiments and functions for setting them up"""
-import os
-import json
 import numpy as np
-import pandas as pd
 import torch
 from torch import nn, optim
 import torch.nn.functional as F
@@ -11,153 +8,6 @@ from scipy.stats import randint, uniform, loguniform
 
 from src.scripts.ts_dl_experiments import Experiment
 from src.settings import LOGS_ROOT
-
-
-def get_config(exp: Experiment):
-    config = {}
-    model_config = {}
-
-    if exp.mode == "experiment":
-        # find and load the best tuned model
-        runs_files = []
-
-        searched_dir = exp.project_name.split("-")
-        searched_dir = "-".join(searched_dir[1:3])
-        serached_dir = f"tune-{searched_dir}"
-        if exp.project_prefix != exp.utcnow:
-            serached_dir = f"{exp.project_prefix}-{serached_dir}"
-        print(f"Searching trained model in {LOGS_ROOT}/*{serached_dir}")
-        for logdir in os.listdir(LOGS_ROOT):
-            if logdir.endswith(serached_dir):
-                runs_files.append(os.path.join(LOGS_ROOT, logdir))
-
-        # if multiple runs files found, choose the latest
-        runs_file = sorted(runs_files)[-1]
-        print(f"Using best model from {runs_file}")
-
-        # get general config
-        with open(f"{runs_file}/config.json", "r") as fp:
-            config = json.load(fp)
-        # the only thing needed from the general config is batch size
-        batch_size = config["batch_size"]
-
-        # get model config
-        df = pd.read_csv(f"{runs_file}/runs.csv", delimiter=",", index_col=False)
-        # pick hyperparams of a model with the highest test_score
-        best_config_path = df.loc[df["test_score"].idxmax()].to_dict()
-        best_config_path = best_config_path["config_path"]
-        with open(best_config_path, "r") as fp:
-            model_config = json.load(fp)
-
-        print("Loaded model coonfig:")
-        print(model_config)
-
-    elif exp.mode == "tune":
-        # add the link to the wandb run
-        model_config["link"] = exp.wandb_logger.get_url()
-        # set batch size
-        batch_size = randint.rvs(4, min(32, int(exp.data_shape[0] / exp.n_splits) - 1))
-
-        # pick random hyperparameters
-        if exp.model in [
-            "mlp",
-            "wide_mlp",
-            "deep_mlp",
-            "attention_mlp",
-            "new_attention_mlp",
-            "meta_mlp",
-            "pe_mlp",
-            "pe_att_mlp",
-        ]:
-            model_config["hidden_size"] = randint.rvs(32, 256)
-            model_config["num_layers"] = randint.rvs(0, 4)
-            model_config["dropout"] = uniform.rvs(0.1, 0.9)
-
-            if exp.model == "wide_mlp":
-                model_config["hidden_size"] = randint.rvs(256, 1024)
-            elif exp.model == "deep_mlp":
-                model_config["num_layers"] = randint.rvs(4, 20)
-
-            if exp.model == "attention_mlp":
-                model_config["time_length"] = exp.data_shape[1]
-            elif exp.model in ["new_attention_mlp", "pe_att_mlp"]:
-                model_config["time_length"] = exp.data_shape[1]
-                model_config["attention_size"] = randint.rvs(32, 256)
-
-            model_config["input_size"] = exp.data_shape[2]
-            model_config["output_size"] = exp.n_classes
-
-        elif exp.model in ["lstm", "noah_lstm"]:
-            model_config["hidden_size"] = randint.rvs(32, 256)
-            model_config["num_layers"] = randint.rvs(1, 4)
-            model_config["bidirectional"] = bool(randint.rvs(0, 1))
-            model_config["fc_dropout"] = uniform.rvs(0.1, 0.9)
-
-            model_config["input_size"] = exp.data_shape[2]
-            model_config["output_size"] = exp.n_classes
-        elif exp.model in [
-            "transformer",
-            "mean_transformer",
-            "first_transformer",
-            "pe_transformer",
-        ]:
-            model_config["head_hidden_size"] = randint.rvs(4, 128)
-            model_config["num_heads"] = randint.rvs(1, 4)
-            model_config["num_layers"] = randint.rvs(1, 4)
-            model_config["fc_dropout"] = uniform.rvs(0.1, 0.9)
-
-            model_config["input_size"] = exp.data_shape[2]
-            model_config["output_size"] = exp.n_classes
-        elif exp.model == "window_mlp":
-            model_config["input_size"] = exp.data_shape[2]
-            model_config["output_size"] = exp.n_classes
-
-            model_config["hidden_size"] = randint.rvs(32, 256)
-            model_config["num_layers"] = randint.rvs(0, 4)
-            model_config["dropout"] = uniform.rvs(0.1, 0.9)
-
-            model_config["decoder"] = {}
-            model_config["decoder"]["type"] = exp.model_decoder
-            if exp.model_decoder == "lstm":
-                model_config["decoder"]["hidden_size"] = randint.rvs(32, 256)
-                model_config["decoder"]["num_layers"] = randint.rvs(1, 4)
-                model_config["decoder"]["bidirectional"] = True
-            elif exp.model_decoder == "tf":
-                model_config["decoder"]["head_hidden_size"] = randint.rvs(4, 128)
-                model_config["decoder"]["num_heads"] = randint.rvs(1, 4)
-                model_config["decoder"]["num_layers"] = randint.rvs(1, 4)
-
-            model_config["mode"] = exp.model_mode
-
-            model_config["datashape"] = {}
-            model_config["datashape"]["window_size"] = randint.rvs(
-                5,
-                exp.data_shape[1] // 5,
-            )
-            # window shift determines how much the windows overlap
-            model_config["datashape"]["window_shift"] = randint.rvs(
-                2, model_config["datashape"]["window_size"]
-            )
-        elif exp.model == "mlp_tf":
-            model_config["input_size"] = exp.data_shape[2]
-            model_config["output_size"] = exp.n_classes
-
-            model_config["hidden_size"] = randint.rvs(32, 256)
-            model_config["num_layers"] = randint.rvs(0, 4)
-            model_config["dropout"] = uniform.rvs(0.1, 0.9)
-
-            model_config["decoder"] = {}
-            model_config["decoder"]["type"] = "tf"
-            model_config["decoder"]["head_hidden_size"] = randint.rvs(4, 128)
-            model_config["decoder"]["num_heads"] = randint.rvs(1, 4)
-            model_config["decoder"]["num_layers"] = randint.rvs(1, 4)
-
-        else:
-            raise NotImplementedError()
-    else:
-        raise NotImplementedError()
-
-    return int(batch_size), model_config
 
 
 def get_model(model, model_config):
@@ -200,15 +50,12 @@ def get_criterion(model):
 
 
 def get_optimizer(exp: Experiment, model_config):
-    if exp.mode == "tune":
-        model_config["lr"] = loguniform.rvs(1e-5, 1e-3)
-
     optimizer = optim.Adam(
         exp._model.parameters(),
         lr=float(model_config["lr"]),
     )
 
-    return model_config["lr"], optimizer
+    return optimizer
 
 
 def positional_encoding(x, n=10000, scaled: bool = True):
