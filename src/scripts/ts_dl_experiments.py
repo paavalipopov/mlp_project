@@ -5,31 +5,30 @@ import sys
 import argparse
 import json
 import shutil
+import time
 
 import pandas as pd
-from apto.utils.misc import boolean_flag
-from apto.utils.report import get_classification_report
 import numpy as np
+import scipy.stats as stats
+
+from sklearn.metrics import accuracy_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.preprocessing import StandardScaler
+
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from animus import EarlyStoppingCallback, IExperiment
 from animus.torch.callbacks import TorchCheckpointerCallback
+
+from apto.utils.misc import boolean_flag
+from apto.utils.report import get_classification_report
+
 import wandb
 
 from src.settings import LOGS_ROOT, UTCNOW
 from src.ts_data import load_dataset
-
-# deferred import
-# from src.ts_model import (
-#     get_config,
-#     get_model,
-#     get_criterion,
-#     get_optimizer,
-# )
 
 
 class Experiment(IExperiment):
@@ -44,14 +43,15 @@ class Experiment(IExperiment):
         path: str,
         model: str,
         dataset: str,
+        test_datasets: list,
         multiclass: bool,
         scaled: bool,
-        test_datasets: list,
         prefix: str,
         n_splits: int,
         n_trials: int,
         max_epochs: int,
         batch_size: int,
+        patience: int,
     ) -> None:
         super().__init__()
         self.config = {}
@@ -67,23 +67,18 @@ class Experiment(IExperiment):
                 mode,
                 model,
                 dataset,
+                test_datasets,
                 multiclass,
                 scaled,
-                test_datasets,
                 prefix,
                 n_splits,
                 n_trials,
-                max_epochs,
-            ) = self.acquire_params(path)
+            ) = self.get_resumed_params(path)
 
         self.mode = self.config["mode"] = mode  # tune or experiment mode
         self.model = self.config["model"] = model  # model name
         # main dataset name (used for training)
         self.dataset_name = self.config["dataset"] = dataset
-        # if dataset should be scaled by sklearn's StandardScaler
-        self.multiclass = multiclass
-        self._scaled = self.config["scaled"] = scaled
-
         if test_datasets is None:  # additional test datasets
             self.test_datasets = []
         else:
@@ -92,82 +87,98 @@ class Experiment(IExperiment):
                 self.test_datasets = []
             else:
                 self.test_datasets = test_datasets
-
-        if self.dataset_name in self.test_datasets:
-            # Fraction of the main dataset is always used as a test dataset;
-            # no need for it in the list of test datasets
-            print(
-                f"Received main dataset {self.dataset_name} among test datasets {self.test_datasets}; removed"
-            )
-            self.test_datasets.remove(self.dataset_name)
         self.config["test_datasets"] = self.test_datasets
+
+        # some datasets have multiple classes; set to true if you want to load all classes
+        self.multiclass = self.config["multiclass"] = multiclass
+        # if dataset should be z-scored over time
+        self.scaled = self.config["scaled"] = scaled
 
         # num of splits for StratifiedKFold
         self.n_splits = self.config["n_splits"] = n_splits
         # num of trials for each fold
         self.n_trials = self.config["n_trials"] = n_trials
+
         self.max_epochs = self.config["max_epochs"] = max_epochs
         self.batch_size = self.config["batch_size"] = batch_size
+        self.patience = self.config["patience"] = patience
 
-        # set project name prefix
-        if len(prefix) == 0:
+        # set project name prefix (best model config in 'experiment' mode
+        # will be extracted from the tuning directory with matching prefix, unless default)
+        if prefix is None:
             self.project_prefix = f"{self.utcnow}"
         else:
-            # '-'s are reserved for name parsing
-            self.project_prefix = prefix.replace("-", "_")
+            if len(prefix) == 0:
+                self.project_prefix = f"{self.utcnow}"
+            else:
+                # '-'s are reserved for project name parsing
+                self.project_prefix = prefix.replace("-", "_")
         self.config["prefix"] = self.project_prefix
 
+        # set project name
         proj_dataset_name = self.dataset_name
         if self.multiclass:
             proj_dataset_name = f"multiclass_{proj_dataset_name}"
-        if self._scaled:
+        if self.scaled:
             proj_dataset_name = f"scaled_{proj_dataset_name}"
         self.project_name = f"{self.mode}-{self.model}-{proj_dataset_name}"
         if len(self.test_datasets) != 0:
-            project_ending = "-tests-" + "_".join(self.test_datasets)
+            project_ending = "-test_ds_" + "_".join(self.test_datasets)
             self.project_name += project_ending
         self.config["project_name"] = self.project_name
 
-        self.logdir = f"{LOGS_ROOT}/{self.project_prefix}-{self.project_name}/"
+        self.logdir = f"{LOGS_ROOT}/{self.project_prefix}-{self.project_name}"
         self.config["logdir"] = self.logdir
 
         # create experiment directory
         os.makedirs(self.logdir, exist_ok=True)
-        # save initial config
-        logfile = f"{self.logdir}/config.json"
-        with open(logfile, "w") as fp:
-            json.dump(self.config, fp)
 
+        # set device
         if torch.cuda.is_available():
             dev = "cuda:0"
         else:
             dev = "cpu"
-
         print(f"Used device: {dev}")
+        self.config["device"] = dev
         self.device = torch.device(dev)
 
-    def acquire_params(self, path):
+        # load raw data
+        self.get_data(self.dataset_name)
+
+        # save initial config
+        logfile = f"{self.logdir}/general_config.json"
+        with open(logfile, "w") as fp:
+            json.dump(self.config, fp, indent=2)
+
+    def get_resumed_params(self, path):
         """
         Used for extracting experiment set-up from the
         given path for resuming an interrupted experiment
         """
         # load experiment config
-        with open(f"{path}/config.json", "r") as fp:
+        with open(f"{path}/general_config.json", "r") as fp:
             config = json.load(fp)
 
-        # find when the experiment got interrupted
-        with open(path + "/runs.csv", "r") as fp:
-            lines = len(fp.readlines()) - 1
-            self.start_k = lines // config["n_trials"]
-            self.start_trial = lines - self.start_k * config["n_trials"]
-
-        # delete failed run
-        faildir = path + f"/k_{self.start_k}/{self.start_trial:04d}"
-        print("Deleting interrupted run logs in " + faildir)
-        try:
-            shutil.rmtree(faildir)
-        except FileNotFoundError:
-            print("Could not delete interrupted run logs - FileNotFoundError")
+        if config["mode"] == "tune":
+            with open(path + "/runs.csv", "r") as fp:
+                self.start_trial = len(fp.readlines()) - 1
+            faildir = path + f"/trial_{self.start_trial:04d}"
+            print("Deleting interrupted run logs in " + faildir)
+            try:
+                shutil.rmtree(faildir)
+            except FileNotFoundError:
+                print("Could not delete interrupted run logs - FileNotFoundError")
+        elif config["mode"] == "experiment":
+            with open(path + "/runs.csv", "r") as fp:
+                lines = len(fp.readlines()) - 1
+                self.start_k = lines // config["n_trials"]
+                self.start_trial = lines - self.start_k * config["n_trials"]
+            faildir = path + f"/k_{self.start_k:02d}/trial_{self.start_trial:04d}"
+            print("Deleting interrupted run logs in " + faildir)
+            try:
+                shutil.rmtree(faildir)
+            except FileNotFoundError:
+                print("Could not delete interrupted run logs - FileNotFoundError")
 
         # reset the default prefix
         self.utcnow = self.config["default_prefix"] = config["default_prefix"]
@@ -176,34 +187,23 @@ class Experiment(IExperiment):
             config["mode"],
             config["model"],
             config["dataset"],
+            config["test_datasets"],
             config["multiclass"],
             config["scaled"],
-            config["test_datasets"],
             config["prefix"],
             config["n_splits"],
             config["n_trials"],
-            config["max_epochs"],
         )
 
-    def initialize_data(self, dataset, for_test=False):
-        # load core dataset (or additional datasets if for_test==True)
-        # your dataset should have shape [n_features; n_channels; time_len]
-
+    def get_data(self, dataset, for_test=False):
+        # features shape should be [n_features; n_channels; time_len]
         features, labels = load_dataset(dataset, self.multiclass)
-        features = np.swapaxes(features, 1, 2)  # [n_features; time_len; n_channels;]
 
-        if self._scaled:
-            # Time scaling
-            # TODO: check if it is correct
-            features_shape = features.shape  # [n_features; time_len; n_channels;]
-            features = features.reshape(-1, features_shape[1])
-            features = features.swapaxes(0, 1)
+        if self.scaled:
+            # z-score over time
+            features = stats.zscore(features, axis=2)
 
-            scaler = StandardScaler()
-            features = scaler.fit_transform(features)  # first dimension is scaled
-
-            features = features.swapaxes(0, 1)
-            features = features.reshape(features_shape)
+        features = np.swapaxes(features, 1, 2)  # [n_features; time_len; n_channels]
 
         if for_test:
             # if dataset is loaded for tests, it should not be
@@ -217,76 +217,45 @@ class Experiment(IExperiment):
 
         self.data_shape = features.shape  # [n_features; time_len; n_channels;]
         self.n_classes = np.unique(labels).shape[0]
+        self.config["data_shape"] = self.data_shape
+        self.config["n_classes"] = self.n_classes
 
         print("data shape: ", self.data_shape)
-        # train-val/test split
+
+        # generate CV folds
         skf = StratifiedKFold(n_splits=self.n_splits, shuffle=True, random_state=42)
-        skf.get_n_splits(features, labels)
+        self.CV_folds = list(skf.split(features, labels))
 
-        train_index, test_index = list(skf.split(features, labels))[self.k]
-
-        X_train, X_test = features[train_index], features[test_index]
-        y_train, y_test = labels[train_index], labels[test_index]
-
-        # train/val split
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_train,
-            y_train,
-            test_size=self.data_shape[0] // self.n_splits,
-            random_state=42 + self.trial,
-            stratify=y_train,
-        )
-
-        self._train_ds = TensorDataset(
-            torch.tensor(X_train, dtype=torch.float32),
-            torch.tensor(y_train, dtype=torch.int64),
-        )
-        self._valid_ds = TensorDataset(
-            torch.tensor(X_val, dtype=torch.float32),
-            torch.tensor(y_val, dtype=torch.int64),
-        )
-        self._test_ds = TensorDataset(
-            torch.tensor(X_test, dtype=torch.float32),
-            torch.tensor(y_test, dtype=torch.int64),
-        )
-
-    def initialize_model(self):
-        # deferred import - there is a cyclic import
-        from src.ts_model import (
-            get_config,
-            get_model,
-            get_criterion,
-            get_optimizer,
-        )
-
-        _, self.model_config = get_config(self)
-        self.config["batch_size"] = self.batch_size
-
-        self._model = get_model(self.model, self.model_config)
-        self._model = self._model.to(self.device)
-
-        self.criterion = get_criterion(self.model)
-
-        lr, self.optimizer = get_optimizer(self, self.model_config)
-        self.model_config["lr"] = lr
+        self.features = features
+        self.labels = labels
 
     def on_experiment_start(self, exp: "IExperiment"):
         super().on_experiment_start(exp)
 
         # create run's path directory
-        self.config["runpath"] = f"{self.logdir}k_{self.k}/{self.trial:04d}"
-        self.config["run_config_path"] = f"{self.config['runpath']}/config.json"
-        os.makedirs(self.config["runpath"], exist_ok=True)
+        if self.mode == "tune":
+            wandb_run_name = f"trial_{self.trial:04d}-k_{self.k:02d}"
+            self.runpath = f"{self.logdir}/trial_{self.trial:04d}/k_{self.k:02d}"
+
+            self.cv_results_path = f"{self.logdir}/trial_{self.trial:04d}/runs.csv"
+        elif self.mode == "experiment":
+            wandb_run_name = f"k_{self.k:02d}-trial_{self.trial:04d}"
+            self.runpath = f"{self.logdir}/k_{self.k:02d}/{self.trial:04d}"
+
+        self.run_config_path = f"{self.runpath}/model_config.json"
+        os.makedirs(self.runpath, exist_ok=True)
 
         # init wandb logger
         self.wandb_logger: wandb.run = wandb.init(
             project=f"{self.project_prefix}-{self.project_name}",
-            name=f"k_{self.k}-trial_{self.trial}",
+            name=wandb_run_name,
             save_code=True,
         )
+        if self.mode == "tune":
+            self.model_config["link"] = exp.wandb_logger.get_url()
 
-        # init data
-        self.initialize_data(self.dataset_name)
+        # init dataset
+        self.initialize_dataset()
 
         # init model
         self.initialize_model()
@@ -311,14 +280,14 @@ class Experiment(IExperiment):
         self.callbacks = {
             "early-stop": EarlyStoppingCallback(
                 minimize=True,
-                patience=30,
+                patience=self.patience,
                 dataset_key="valid",
                 metric_key="loss",
                 min_delta=0.001,
             ),
             "checkpointer": TorchCheckpointerCallback(
                 exp_attr="_model",
-                logdir=self.config["runpath"],
+                logdir=self.runpath,
                 dataset_key="valid",
                 metric_key="loss",
                 minimize=True,
@@ -327,17 +296,57 @@ class Experiment(IExperiment):
 
         self.num_epochs = self.max_epochs
 
-        self.wandb_logger.config.update(self.config)
-        self.wandb_logger.config.update(self.model_config)
+        self.wandb_logger.config.update({"general": self.config})
+        self.wandb_logger.config.update({"model": self.model_config})
 
-        # update saved config
-        with open(f"{self.logdir}/config.json", "w") as fp:
-            json.dump(self.config, fp)
         # save model params in the run's directory
-        with open(self.config["run_config_path"], "w") as fp:
-            json.dump(self.model_config, fp)
+        with open(self.run_config_path, "w") as fp:
+            json.dump(self.model_config, fp, indent=2)
 
-    def run_dataset(self) -> None:
+    def initialize_dataset(self):
+        train_index, test_index = self.CV_folds[self.k]
+
+        X_train, X_test = self.features[train_index], self.features[test_index]
+        y_train, y_test = self.labels[train_index], self.labels[test_index]
+
+        # train/val split
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train,
+            y_train,
+            test_size=self.data_shape[0] // self.n_splits,
+            random_state=42 + self.trial if self.mode == "experiment" else 42,
+            stratify=y_train,
+        )
+
+        self._train_ds = TensorDataset(
+            torch.tensor(X_train, dtype=torch.float32),
+            torch.tensor(y_train, dtype=torch.int64),
+        )
+        self._valid_ds = TensorDataset(
+            torch.tensor(X_val, dtype=torch.float32),
+            torch.tensor(y_val, dtype=torch.int64),
+        )
+        self._test_ds = TensorDataset(
+            torch.tensor(X_test, dtype=torch.float32),
+            torch.tensor(y_test, dtype=torch.int64),
+        )
+
+    def initialize_model(self):
+        # deferred import to counter cyclic import error
+        from src.ts_model import (
+            get_model,
+            get_criterion,
+            get_optimizer,
+        )
+
+        self._model = get_model(self.model, self.model_config)
+        self._model = self._model.to(self.device)
+
+        self.criterion = get_criterion(self.model)
+
+        self.optimizer = get_optimizer(self, self.model_config)
+
+    def run_dataset(self, thr_tune: bool = False):
         all_scores, all_targets = [], []
         total_loss = 0.0
         self._model.train(self.is_train_dataset)
@@ -362,7 +371,14 @@ class Experiment(IExperiment):
 
         y_test = np.hstack(all_targets)
         y_score = np.vstack(all_scores)
-        y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
+        if thr_tune is True:
+            return y_test, y_score
+
+        if self.dataset_key == "test":
+            y_score_tuned = y_score - self.best_threshold
+            y_pred = np.argmax(y_score_tuned, axis=-1).astype(np.int32)
+        else:
+            y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
 
         report = get_classification_report(
             y_true=y_test, y_pred=y_pred, y_score=y_score, beta=0.5
@@ -390,10 +406,38 @@ class Experiment(IExperiment):
     def on_experiment_end(self, exp: "IExperiment") -> None:
         super().on_experiment_end(exp)
 
+        print("Run threshold tuning")
+        # load best weights
+        model_logpath = f"{self.runpath}/_model.best.pth"
+        checkpoint = torch.load(model_logpath, map_location=lambda storage, loc: storage)
+        self._model.load_state_dict(checkpoint)
+        self._model = self._model.to(self.device)
+
+        self.dataset_key = "valid"
+        self.dataset = self.datasets["valid"]
+
+        val_y_test, val_y_score = self.run_dataset(thr_tune=True)
+
+        best_acc = 0.0
+        self.best_threshold = []
+        for thr in self.thr_gen(self.n_classes, 1.0, []):
+            thr = np.array(thr)
+            new_y_score = val_y_score - thr
+
+            new_y_pred = np.argmax(new_y_score, axis=-1).astype(np.int32)
+            acc = accuracy_score(val_y_test, new_y_pred)
+            if acc > best_acc:
+                best_acc = acc
+                self.best_threshold = [thr]
+            elif acc == best_acc:
+                self.best_threshold += [thr]
+
+        self.best_threshold = np.mean(np.stack(self.best_threshold), axis=0)
+
         print("Run test dataset")
         # load best weights
-        logpath = f"{self.config['runpath']}/_model.best.pth"
-        checkpoint = torch.load(logpath, map_location=lambda storage, loc: storage)
+        model_logpath = f"{self.runpath}/_model.best.pth"
+        checkpoint = torch.load(model_logpath, map_location=lambda storage, loc: storage)
         self._model.load_state_dict(checkpoint)
         self._model = self._model.to(self.device)
 
@@ -414,12 +458,12 @@ class Experiment(IExperiment):
             "test_accuracy": self.dataset_metrics["accuracy"],
             "test_score": self.dataset_metrics["score"],
             "test_loss": self.dataset_metrics["loss"],
-            "config_path": self.config["run_config_path"],
         }
 
-        print("Run additional test datasets")
+        if len(self.test_datasets) != 0:
+            print("Run additional test datasets")
         for dataset_name in self.test_datasets:
-            test_ds = self.initialize_data(dataset_name, for_test=True)
+            test_ds = self.get_data(dataset_name, for_test=True)
             self.dataset = DataLoader(
                 test_ds,
                 batch_size=self.batch_size,
@@ -437,36 +481,77 @@ class Experiment(IExperiment):
             results[f"{dataset_name}_test_score"] = self.dataset_metrics["score"]
             results[f"{dataset_name}_test_loss"] = self.dataset_metrics["loss"]
 
+        # save run results in csv file and log to WandB
         df = pd.DataFrame(results, index=[0])
-        with open(f"{self.logdir}/runs.csv", "a") as f:
-            df.to_csv(f, header=f.tell() == 0, index=False)
-        results.pop("config_path")
+        if self.mode == "tune":
+            with open(self.cv_results_path, "a") as f:
+                df.to_csv(f, header=f.tell() == 0, index=False)
+        elif self.mode == "experiment":
+            with open(f"{self.logdir}/runs.csv", "a") as f:
+                df.to_csv(f, header=f.tell() == 0, index=False)
         self.wandb_logger.log(results)
         self.wandb_logger.finish()
 
+    def thr_gen(self, depth, summ, constr_threshold):
+        if depth == 1:
+            yield constr_threshold + [summ]
+            return
+        for thr in np.arange(0.0, summ + 0.0001, 0.001):
+            rest_sum = summ - thr
+            if rest_sum >= 0.0:
+                new_constr_threshold = constr_threshold + [thr]
+                yield from self.thr_gen(depth - 1, rest_sum, new_constr_threshold)
+
     def start(self):
-        # get experiment folds-trial pairs
-        # if mode is 'resume', then it won't have already completed folds
-        # else it is just all folds-trial pairs from (0, 0) to (n_splits, n_trials)
-        folds_of_interest = []
+        # deferred import to counter cyclic import error
+        from src.ts_config import get_tune_config, get_best_config
 
-        if self.start_k < self.n_splits:
-            # interrupted fold
+        # self.start_trial and self.start_k are set to 0 in the initialization,
+        # and are reseted accordingly if the initial mode was 'resume'
+
+        if self.mode == "tune":
+            # in 'tune' mode for each trial we are running cross-validated experiments with
+            # the same tuning config
             for trial in range(self.start_trial, self.n_trials):
-                folds_of_interest += [(self.start_k, trial)]
+                self.trial = trial
+                self.model_config = get_tune_config(self, random_seed=int(time.time()))
+                for k in range(self.n_splits):
+                    self.k = k
+                    self.run()
 
-            # the rest of folds
+                # read CV results, save the average
+                df = pd.read_csv(self.cv_results_path)
+                auc = df["test_score"].to_numpy()
+                auc = np.mean(auc)
+                df = pd.DataFrame(
+                    {
+                        "trial": trial,
+                        "score": auc,
+                        "path_to_config": self.run_config_path,
+                    },
+                    index=[0],
+                )
+                with open(f"{self.logdir}/runs.csv", "a") as f:
+                    df.to_csv(f, header=f.tell() == 0, index=False)
+
+        elif self.mode == "experiment":
+            # in 'experiment' mode we run cross-validated expriments; for each test fold
+            # we are splitting train dataset into train/val datasets with different random seeds
+            # (determined by 'trial')
+            self.model_config = get_best_config(self)
+
+            self.k = self.start_k
+            for trial in range(self.start_trial, self.n_trials):
+                self.trial = trial
+                self.run()
             for k in range(self.start_k + 1, self.n_splits):
+                self.k = k
                 for trial in range(self.n_trials):
-                    folds_of_interest += [(k, trial)]
-        else:
-            raise IndexError
+                    self.trial = trial
+                    self.run()
 
-        # run through folds
-        for k, trial in folds_of_interest:
-            self.k = k  # k'th test fold
-            self.trial = trial  # trial'th trial on the k'th fold
-            self.run()
+        else:
+            raise NotImplementedError()
 
 
 if __name__ == "__main__":
@@ -474,7 +559,42 @@ if __name__ == "__main__":
 
     warnings.filterwarnings("ignore")
 
-    for_continue = "resume" in sys.argv
+    models = [
+        "mlp",
+        "wide_mlp",
+        "deep_mlp",
+        "attention_mlp",
+        "new_attention_mlp",
+        "meta_mlp",
+        "pe_mlp",
+        "lstm",
+        "noah_lstm",
+        "transformer",
+        "mean_transformer",
+        "first_transformer",
+        "pe_transformer",
+    ]
+    datasets = [
+        "oasis",
+        "adni",
+        "abide",
+        "abide_869",
+        "abide_roi",
+        "fbirn",
+        "fbirn_100",
+        "fbirn_200",
+        "fbirn_400",
+        "fbirn_1000",
+        "cobre",
+        "bsnip",
+        "hcp",
+        "hcp_roi",
+        "ukb",
+        "ukb_age_bins",
+        "time_fbirn",
+    ]
+
+    for_resume = "resume" in sys.argv
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -493,7 +613,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--path",
         type=str,
-        required=for_continue,
+        required=for_resume,
         help="Path to the interrupted experiment \
             (e.g., /Users/user/mlp_project/assets/logs/prefix-mode-model-ds), \
                 used in 'resume' mode",
@@ -501,47 +621,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        choices=[
-            "mlp",
-            "wide_mlp",
-            "deep_mlp",
-            "attention_mlp",
-            "new_attention_mlp",
-            "meta_mlp",
-            "pe_mlp",
-            "lstm",
-            "noah_lstm",
-            "transformer",
-            "mean_transformer",
-            "first_transformer",
-            "pe_transformer",
-        ],
-        required=not for_continue,
+        choices=models,
+        required=not for_resume,
         help="Name of the model to run",
     )
     parser.add_argument(
         "--ds",
         type=str,
-        choices=[
-            "oasis",
-            "adni",
-            "abide",
-            "fbirn",
-            "cobre",
-            "abide_869",
-            "ukb",
-            "ukb_age_bins",
-            "bsnip",
-            "time_fbirn",
-            "fbirn_100",
-            "fbirn_200",
-            "fbirn_400",
-            "fbirn_1000",
-            "hcp",
-            "hcp_roi",
-            "abide_roi",
-        ],
-        required=not for_continue,
+        choices=datasets,
+        required=not for_resume,
         help="Name of the dataset to use for training",
     )
 
@@ -549,55 +637,23 @@ if __name__ == "__main__":
         "--test-ds",
         nargs="*",
         type=str,
-        choices=[
-            "oasis",
-            "adni",
-            "abide",
-            "fbirn",
-            "cobre",
-            "abide_869",
-            "ukb",
-            "ukb_age_bins",
-            "bsnip",
-            "time_fbirn",
-            "fbirn_100",
-            "fbirn_200",
-            "fbirn_400",
-            "fbirn_1000",
-            "hcp",
-            "hcp_roi",
-            "abide_roi",
-        ],
+        choices=datasets,
         help="Additional datasets for testing",
     )
 
-    # oasis, bsnip, adni and ukb_age_bins have multiple classes;
-    # ukb_age_bins is ukb age dataset with ages splitted into bins
+    # some datasets have multiple classes; set to true if you want to load all classes
     boolean_flag(parser, "multiclass", default=False)
+
+    # whehter dataset should be z-scored over time
+    boolean_flag(parser, "scaled", default=False)
 
     parser.add_argument(
         "--prefix",
         type=str,
-        default="",
         help="Prefix for the project name (body of the project name \
             is '$mode-$model-$dataset'): default: UTC time",
     )
 
-    # whehter dataset should be scaled by sklearn's StandardScaler
-    boolean_flag(parser, "scaled", default=False)
-
-    parser.add_argument(
-        "--max-epochs",
-        type=int,
-        default=30,
-        help="Max number of epochs (min 30)",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=64,
-        help="Batch size (default: 64)",
-    )
     parser.add_argument(
         "--num-trials",
         type=int,
@@ -610,6 +666,26 @@ if __name__ == "__main__":
         default=5,
         help="Number of splits for StratifiedKFold (affects the number of test folds)",
     )
+
+    parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=200,
+        help="Max number of epochs (min 30)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=64,
+        help="Batch size (default: 64)",
+    )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=30,
+        help="Early stopping patience (default: 30)",
+    )
+
     args = parser.parse_args()
 
     Experiment(
@@ -617,12 +693,13 @@ if __name__ == "__main__":
         path=args.path,
         model=args.model,
         dataset=args.ds,
+        test_datasets=args.test_ds,
         multiclass=args.multiclass,
         scaled=args.scaled,
-        test_datasets=args.test_ds,
         prefix=args.prefix,
         n_splits=args.num_splits,
         n_trials=args.num_trials,
         max_epochs=args.max_epochs,
         batch_size=args.batch_size,
+        patience=args.patience,
     ).start()
