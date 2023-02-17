@@ -13,7 +13,6 @@ import scipy.stats as stats
 
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.preprocessing import StandardScaler
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
