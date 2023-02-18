@@ -415,12 +415,16 @@ def load_UKB_age_bins(
     features, labels
     """
 
-    features, labels = load_UKB_age(dataset_path, indices_path, filter_indices)
+    features, ages = load_UKB_age(dataset_path, indices_path, filter_indices)
+    _, sexes = load_UKB()
 
-    bins = np.histogram_bin_edges(labels)
-    labels = np.digitize(labels, bins)
+    bins = np.histogram_bin_edges(ages)
+    ages = np.digitize(ages, bins)
 
-    labels = labels - 1
+    ages[ages == bins.shape[0]] = bins.shape[0] - 1
+    ages = ages - 1
+
+    labels = ages + sexes * np.unique(ages).shape[0]
 
     return features, labels
 
@@ -514,7 +518,8 @@ def load_BSNIP(
 
 def load_ADNI(
     multiclass: bool = False,
-    dataset_path: str = DATA_ROOT.joinpath("adni/ADNI_data.npz"),
+    only_first_sessions: bool = True,
+    dataset_path: str = DATA_ROOT.joinpath("adni/ADNI_data_194.npz"),
     indices_path: str = DATA_ROOT.joinpath("adni/correct_indices_GSP.csv"),
     filter_indices: bool = True,
 ):
@@ -522,7 +527,7 @@ def load_ADNI(
     Return ADNI data
 
     Input:
-    dataset_path: str = DATA_ROOT.joinpath("adni/ADNI_data.npz")
+    dataset_path: str = DATA_ROOT.joinpath("adni/ADNI_data_194.npz")
     - path to the dataset with lablels
     indices_path: str = DATA_ROOT.joinpath("adni/correct_indices_GSP.csv")
     - path to correct indices/components
@@ -538,12 +543,17 @@ def load_ADNI(
     with np.load(dataset_path) as npzfile:
         features = npzfile["features"]
         labels = npzfile["diagnoses"]
+        first_sessions = npzfile["early_indices"]
+
+    if only_first_sessions:
+        features = features[first_sessions, :, :]
+        labels = labels[first_sessions]
 
     if filter_indices:
         # get correct indices/components
         indices = pd.read_csv(indices_path, header=None)
         idx = indices[0].values - 1
-        features = features[:, idx, :156]
+        features = features[:, idx, :]
 
     filter_array = []
     if multiclass:
@@ -570,6 +580,7 @@ def load_ADNI(
                     filter_array.append(False)
     else:
         # leave subjects of class 0 and 1 only
+        # {"Patient": 6, "LMCI": 2, "SMC": 5, "AD": 1, "EMCI": 4, "MCI": 3, "CN": 0}
         for label in labels:
             if label in (0, 1):
                 filter_array.append(True)

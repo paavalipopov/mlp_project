@@ -10,6 +10,7 @@ def get_tune_config(exp: Experiment, random_seed):
     from scipy.stats import randint, uniform, loguniform
 
     model_config = {}
+    model_config["lr"] = loguniform.rvs(1e-5, 1e-3, random_state=random_seed)
 
     # pick random hyperparameters
     if exp.model in [
@@ -55,13 +56,16 @@ def get_tune_config(exp: Experiment, random_seed):
     elif exp.model in [
         "transformer",
         "mean_transformer",
-        "first_transformer",
         "pe_transformer",
     ]:
         model_config["head_hidden_size"] = randint.rvs(4, 128, random_state=random_seed)
         model_config["num_heads"] = randint.rvs(1, 4, random_state=random_seed)
         model_config["num_layers"] = randint.rvs(1, 4, random_state=random_seed)
         model_config["fc_dropout"] = uniform.rvs(0.1, 0.9, random_state=random_seed)
+
+        if exp.model == "pe_transformer":
+            model_config["scaled"] = bool(randint.rvs(0, 1, random_state=random_seed))
+            model_config["post"] = bool(randint.rvs(0, 1, random_state=random_seed + 1))
 
         model_config["input_size"] = exp.data_shape[2]
         model_config["output_size"] = exp.n_classes
@@ -108,6 +112,9 @@ def get_tune_config(exp: Experiment, random_seed):
         model_config["input_size"] = exp.data_shape[2]
         model_config["output_size"] = exp.n_classes
 
+        model_config["scaled"] = bool(randint.rvs(0, 1, random_state=random_seed))
+        model_config["post"] = bool(randint.rvs(0, 1, random_state=random_seed + 1))
+
         model_config["hidden_size"] = randint.rvs(32, 256, random_state=random_seed)
         model_config["num_layers"] = randint.rvs(0, 4, random_state=random_seed)
         model_config["dropout"] = uniform.rvs(0.1, 0.9, random_state=random_seed)
@@ -123,11 +130,48 @@ def get_tune_config(exp: Experiment, random_seed):
         model_config["decoder"]["num_layers"] = randint.rvs(
             1, 4, random_state=random_seed
         )
+    elif exp.model == "stdim":
+        from src.ts_model import NatureOneCNN
 
+        # params of dataset reshapes
+        model_config["datashape"] = {}
+        # data_shape is [n_features; time_len; n_channels]
+        # window_size=9 is minimal for the given kernels preset of NatureOneCNN
+        model_config["datashape"]["window_size"] = randint.rvs(
+            9, exp.data_shape[1] // 5, random_state=random_seed
+        )
+        # window shift determines how much the windows overlap
+        model_config["datashape"]["window_shift"] = randint.rvs(
+            2, model_config["datashape"]["window_size"], random_state=random_seed
+        )
+
+        # params of encoder
+        model_config["encoder"] = {}
+        # # it is 256 in MILC paper
+        model_config["encoder"]["feature_size"] = randint.rvs(
+            32, 256, random_state=random_seed
+        )
+        # model_config["encoder"]["feature_size"] = 256
+        # # it is 3e-4 in MILC paper
+        model_config["encoder"]["lr"] = loguniform.rvs(
+            1e-5, 1e-3, random_state=random_seed
+        )
+        # model_config["encoder"]["lr"] = 3e-4
+        # # data_shape is [n_features; time_len; n_channels]
+        model_config["encoder"]["input_channels"] = exp.data_shape[2]
+        # convolution layers output size (depends on the windows size)
+        model_config["encoder"]["conv_output_size"] = NatureOneCNN.get_conv_output_size(
+            model_config["datashape"]["window_size"]
+        )
+        assert model_config["encoder"]["conv_output_size"] >= 1
+
+        # params of probe
+        model_config["probe"] = {}
+        model_config["probe"]["input_size"] = model_config["encoder"]["feature_size"]
+        model_config["probe"]["output_size"] = exp.n_classes
+        model_config["probe"]["lr"] = model_config["lr"]
     else:
         raise NotImplementedError()
-
-    model_config["lr"] = loguniform.rvs(1e-5, 1e-3, random_state=random_seed)
 
     print("Tuning config:")
     print(model_config)
