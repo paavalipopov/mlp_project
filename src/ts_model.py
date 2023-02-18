@@ -37,8 +37,6 @@ def get_model(exp: Experiment, model, model_config):
         return Transformer(model_config)
     elif model == "mean_transformer":
         return MeanTransformer(model_config)
-    elif model == "first_transformer":
-        return First_Transformer(model_config)
     elif model == "pe_transformer":
         return PE_Transformer(model_config)
 
