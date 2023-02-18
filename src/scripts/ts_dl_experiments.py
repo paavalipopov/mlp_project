@@ -198,6 +198,9 @@ class Experiment(IExperiment):
         # features shape should be [n_features; n_channels; time_len]
         features, labels = load_dataset(dataset, self.multiclass)
 
+        # get rid of invalid data (NaNs, infs)
+        features[features != features] = 0
+
         if self.scaled:
             # z-score over time
             features = stats.zscore(features, axis=2)
@@ -303,9 +306,32 @@ class Experiment(IExperiment):
             json.dump(self.model_config, fp, indent=2)
 
     def initialize_dataset(self):
+        if self.model == "stdim":
+            # self.data_shape: [n_features; time_len; n_channels;]
+            # reshape data's time dimension into windows:
+            subjects = self.data_shape[0]  # subjects
+            tc = self.data_shape[1]  # original time length
+            # window x dim, or channels (equals to encoder input_channels)
+            sample_x = self.data_shape[2]
+            # window y dim, or window time
+            sample_y = self.model_config["datashape"]["window_size"]
+            # windows shift - how much windows overlap
+            window_shift = self.model_config["datashape"]["window_shift"]
+            # number of windows, or new time
+            samples_per_subject = tc // window_shift - (sample_y // window_shift + 1)
+
+            features = np.zeros((subjects, samples_per_subject, sample_x, sample_y))
+            for i in range(subjects):
+                for j in range(samples_per_subject):
+                    features[i, j, :, :] = self.features[
+                        i, (j * window_shift) : (j * window_shift) + sample_y, :
+                    ].swapaxes(0, 1)
+        else:
+            features = self.features
+
         train_index, test_index = self.CV_folds[self.k]
 
-        X_train, X_test = self.features[train_index], self.features[test_index]
+        X_train, X_test = features[train_index], features[test_index]
         y_train, y_test = self.labels[train_index], self.labels[test_index]
 
         # train/val split
@@ -316,6 +342,20 @@ class Experiment(IExperiment):
             random_state=42 + self.trial if self.mode == "experiment" else 42,
             stratify=y_train,
         )
+
+        if self.model == "stdim":
+            # stdim encoder requires data that's prepared differently
+            self.encoder_dataset = {"train": X_train.copy(), "val": X_val.copy()}
+
+            # reshape data for stdim probes (last time)
+            y_train = np.kron(y_train, np.ones((1, X_train.shape[1]))).squeeze()
+            X_train = X_train.reshape(-1, X_train.shape[2], X_train.shape[3])
+
+            y_val = np.kron(y_val, np.ones((1, X_val.shape[1]))).squeeze()
+            X_val = X_val.reshape(-1, X_val.shape[2], X_val.shape[3])
+
+            y_test = np.kron(y_test, np.ones((1, X_test.shape[1]))).squeeze()
+            X_test = X_test.reshape(-1, X_test.shape[2], X_test.shape[3])
 
         self._train_ds = TensorDataset(
             torch.tensor(X_train, dtype=torch.float32),
@@ -338,7 +378,7 @@ class Experiment(IExperiment):
             get_optimizer,
         )
 
-        self._model = get_model(self.model, self.model_config)
+        self._model = get_model(self, self.model, self.model_config)
         self._model = self._model.to(self.device)
 
         self.criterion = get_criterion(self.model)
@@ -572,6 +612,7 @@ if __name__ == "__main__":
         "mean_transformer",
         "first_transformer",
         "pe_transformer",
+        "stdim",
     ]
     datasets = [
         "oasis",
@@ -594,6 +635,7 @@ if __name__ == "__main__":
     ]
 
     for_resume = "resume" in sys.argv
+    tune = "tune" in sys.argv
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -656,7 +698,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-trials",
         type=int,
-        default=10,
+        default=100 if tune else 10,
         help="Number of trials to run on each test fold",
     )
     parser.add_argument(

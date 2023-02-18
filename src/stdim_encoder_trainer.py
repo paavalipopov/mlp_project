@@ -31,7 +31,7 @@ class EncoderTrainer(IExperiment):
     ) -> None:
         super().__init__()
         # deferred import - handling import cycle
-        from src.stdim.ts_stdim_model import NatureOneCNN
+        from src.ts_model import NatureOneCNN
 
         self.encoder_config = encoder_config
         self.encoder = NatureOneCNN(encoder_config)

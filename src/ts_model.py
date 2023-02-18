@@ -10,7 +10,7 @@ from src.scripts.ts_dl_experiments import Experiment
 from src.settings import LOGS_ROOT
 
 
-def get_model(model, model_config):
+def get_model(exp: Experiment, model, model_config):
     if model in ["mlp", "wide_mlp", "deep_mlp"]:
         return MLP(model_config)
     elif model == "attention_mlp":
@@ -42,6 +42,20 @@ def get_model(model, model_config):
     elif model == "pe_transformer":
         return PE_Transformer(model_config)
 
+    elif model == "stdim":
+        from src.stdim_encoder_trainer import EncoderTrainer
+
+        encoder = EncoderTrainer(
+            encoder_config=exp.model_config["encoder"],
+            dataset=exp.encoder_dataset,
+            logpath=exp.runpath,
+            wandb_logger=exp.wandb_logger,
+            batch_size=exp.batch_size,
+            device=exp.device,
+        ).train_encoder()
+
+        return STDIM(encoder, Probe(exp.model_config["probe"]))
+
     raise NotImplementedError()
 
 
@@ -50,10 +64,16 @@ def get_criterion(model):
 
 
 def get_optimizer(exp: Experiment, model_config):
-    optimizer = optim.Adam(
-        exp._model.parameters(),
-        lr=float(model_config["lr"]),
-    )
+    if exp.model == "stdim":
+        optimizer = optim.Adam(
+            exp._model.probe.parameters(),
+            lr=float(model_config["lr"]),
+        )
+    else:
+        optimizer = optim.Adam(
+            exp._model.parameters(),
+            lr=float(model_config["lr"]),
+        )
 
     return optimizer
 
@@ -286,6 +306,10 @@ class MLP_TF(nn.Module):
 
         input_size = int(model_config["input_size"])
         output_size = int(model_config["output_size"])
+
+        self.post = bool(model_config["post"])
+        self.scaled = bool(model_config["scaled"])
+
         dropout = float(model_config["dropout"])
         hidden_size = int(model_config["hidden_size"])
         num_layers = int(model_config["num_layers"])
@@ -338,10 +362,14 @@ class MLP_TF(nn.Module):
         # ln:  length in time, 295
         # fs: number of channels, 53
 
-        x = positional_encoding(x)
-
-        fc_output = self.fc(x.view(-1, fs))
-        fc_output = fc_output.view(bs, ln, -1)
+        if self.post:
+            fc_output = self.fc(x.view(-1, fs))
+            fc_output = fc_output.view(bs, ln, -1)
+            fc_output = positional_encoding(fc_output, scaled=self.scaled)
+        else:
+            x = positional_encoding(x, scaled=self.scaled)
+            fc_output = self.fc(x.view(-1, fs))
+            fc_output = fc_output.view(bs, ln, -1)
 
         tf_output = self.decoder(fc_output)
         tf_output = tf_output[:, 0, :]
@@ -790,41 +818,6 @@ class Transformer(nn.Module):
     def forward(self, x):
         # x.shape = [Batch_size; time_len; n_channels]
         fc_output = self.transformer(x)
-        fc_output = fc_output[:, -1, :]
-        fc_output = self.fc(fc_output)
-        return fc_output
-
-
-class First_Transformer(nn.Module):
-    def __init__(self, model_config):
-        super(First_Transformer, self).__init__()
-
-        input_size = int(model_config["input_size"])
-        output_size = int(model_config["output_size"])
-        fc_dropout = float(model_config["fc_dropout"])
-        head_hidden_size = int(model_config["head_hidden_size"])
-        num_layers = int(model_config["num_layers"])
-        num_heads = int(model_config["num_heads"])
-
-        hidden_size = head_hidden_size * num_heads
-
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_size, nhead=num_heads, batch_first=True
-        )
-        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        layers = [
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            transformer_encoder,
-        ]
-        self.transformer = nn.Sequential(*layers)
-        self.fc = nn.Sequential(
-            nn.Dropout(p=fc_dropout), nn.Linear(hidden_size, output_size)
-        )
-
-    def forward(self, x):
-        # x.shape = [Batch_size; time_len; n_channels]
-        fc_output = self.transformer(x)
         fc_output = fc_output[:, 0, :]
         fc_output = self.fc(fc_output)
         return fc_output
@@ -875,19 +868,17 @@ class PE_Transformer(nn.Module):
         head_hidden_size = int(model_config["head_hidden_size"])
         num_layers = int(model_config["num_layers"])
         num_heads = int(model_config["num_heads"])
+        self.scaled = bool(model_config["scaled"])
+        self.post = bool(model_config["post"])
 
         hidden_size = head_hidden_size * num_heads
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size, nhead=num_heads, batch_first=True
         )
-        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        layers = [
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            transformer_encoder,
-        ]
-        self.transformer = nn.Sequential(*layers)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.input_embed = nn.Linear(input_size, hidden_size)
 
         self.fc = nn.Sequential(
             nn.Dropout(p=fc_dropout), nn.Linear(hidden_size, output_size)
@@ -895,10 +886,105 @@ class PE_Transformer(nn.Module):
 
     def forward(self, x):
         # x.shape = [Batch_size; time_len; n_channels]
-        x = positional_encoding(x, scaled=False)
+
+        if self.post:
+            input_embed = self.input_embed(x)
+            input_embed = positional_encoding(input_embed, scaled=self.scaled)
+        else:
+            x = positional_encoding(x, scaled=self.scaled)
+            input_embed = self.input_embed(x)
 
         tf_output = self.transformer(x)
         tf_output = tf_output[:, 0, :]
 
         fc_output = self.fc(tf_output)
         return fc_output
+
+
+class STDIM(nn.Module):
+    def __init__(self, encoder, probe):
+        super().__init__()
+        self.encoder = encoder
+        self.probe = probe
+
+    def forward(self, x):
+        x = self.encoder(x)
+        return self.probe(x)
+
+
+class Probe(nn.Module):
+    def __init__(self, probe_config):
+        super().__init__()
+        self.model = nn.Linear(
+            in_features=int(probe_config["input_size"]),
+            out_features=int(probe_config["output_size"]),
+        )
+
+    def forward(self, x):
+        return self.model(x)
+
+
+class Flatten(nn.Module):
+    def forward(self, x):
+        return x.view(x.size(0), -1)
+
+
+class NatureOneCNN(nn.Module):
+    def init(self, module, weight_init, bias_init, gain=1):
+        weight_init(module.weight.data, gain=gain)
+        bias_init(module.bias.data)
+        return module
+
+    def __init__(self, encoder_config):
+        super().__init__()
+
+        self.feature_size = int(encoder_config["feature_size"])
+        self.input_size = int(encoder_config["input_channels"])
+        self.conv_output_size = int(encoder_config["conv_output_size"])
+
+        init_ = lambda m: self.init(
+            m,
+            nn.init.orthogonal_,
+            lambda x: nn.init.constant_(x, 0),
+            nn.init.calculate_gain("relu"),
+        )
+        self.flatten = Flatten()
+
+        final_conv_size = 200 * self.conv_output_size
+        # final_conv_shape = (200, self.conv_output_size)
+        self.main = nn.Sequential(
+            init_(nn.Conv1d(self.input_size, 64, 4, stride=1)),
+            nn.ReLU(),
+            init_(nn.Conv1d(64, 128, 4, stride=1)),
+            nn.ReLU(),
+            init_(nn.Conv1d(128, 200, 3, stride=1)),
+            nn.ReLU(),
+            Flatten(),
+            init_(nn.Linear(final_conv_size, self.feature_size)),
+        )
+
+    @property
+    def local_layer_depth(self):
+        return self.main[4].out_channels
+
+    @staticmethod
+    def get_conv_output_size(conv_input_size):
+        # https://www.baeldung.com/cs/convolutional-layer-size
+        conv_output_size = conv_input_size - 4 + 1  # 1st layer
+        conv_output_size = conv_output_size - 4 + 1  # 2nd layer
+        conv_output_size = conv_output_size - 3 + 1  # 3rd layer
+
+        return conv_output_size
+
+    def forward(self, inputs, fmaps=False, five=False):
+        f5 = self.main[:6](inputs)
+        out = self.main[6:](f5)
+
+        if five:
+            return f5.permute(0, 2, 1)
+        if fmaps:
+            return {
+                "f5": f5.permute(0, 2, 1),
+                "out": out,
+            }
+        return out
