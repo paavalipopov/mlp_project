@@ -1,6 +1,7 @@
 # pylint: disable=W0201,W0223,C0103,C0115,C0116,R0902,E1101,R0914
 """Main training script for simple models that output logits"""
 import os
+import glob
 import sys
 import argparse
 import json
@@ -531,6 +532,10 @@ class Experiment(IExperiment):
         self.wandb_logger.log(results)
         self.wandb_logger.finish()
 
+        # delete checkpointers:
+        for file in glob.glob(f"{self.runpath}/_model.*.pth"):
+            os.remove(file)
+
     def thr_gen(self, depth, summ, constr_threshold):
         if depth == 1:
             yield constr_threshold + [summ]
@@ -610,7 +615,6 @@ if __name__ == "__main__":
         "noah_lstm",
         "transformer",
         "mean_transformer",
-        "first_transformer",
         "pe_transformer",
         "stdim",
     ]
