@@ -1,2 +1,0 @@
-path
-pytest==5.3.1
