@@ -117,3 +117,16 @@ PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode tune --model pe_tra
 PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode experiment --model pe_transformer --ds fbirn --max-epochs 200 --num-trials 10;
 PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode tune --model pe_mlp --ds fbirn --max-epochs 200 --num-trials 10;
 PYTHONPATH=./ python src/scripts/ts_dl_experiments.py --mode experiment --model pe_mlp --ds fbirn --max-epochs 200 --num-trials 10;
+
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds fbirn --test-ds cobre bsnip --prefix fixed_cv; 
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds cobre --test-ds fbirn bsnip --prefix fixed_cv;
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds bsnip --test-ds fbirn bsnip --prefix fixed_cv;
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds oasis --test-ds adni --prefix fixed_cv;
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds adni --test-ds oasis --prefix fixed_cv;
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds fbirn_200 --prefix fixed_cv;
+
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds abide_869 --prefix fixed_cv;
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds abide_roi --prefix fixed_cv;
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds hcp --prefix fixed_cv;
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds hcp_roi --prefix fixed_cv;
+PYTHONPATH=./ python src/scripts/fnc_lr_experiments.py --ds time_fbirn --prefix fixed_cv;

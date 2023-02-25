@@ -6,14 +6,14 @@ import argparse
 import json
 import shutil
 
+import scipy.stats as stats
+
 import pandas as pd
 from apto.utils.misc import boolean_flag
 from apto.utils.report import get_classification_report
 import numpy as np
-from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import StratifiedKFold
 import torch
-from torch.utils.data import TensorDataset
 from tqdm.auto import tqdm
 
 from sklearn.linear_model import LogisticRegression
@@ -24,14 +24,6 @@ import wandb
 
 from src.settings import LOGS_ROOT, UTCNOW
 from src.ts_data import load_dataset
-
-# deferred import
-# from src.ts_model import (
-#     get_config,
-#     get_model,
-#     get_criterion,
-#     get_optimizer,
-# )
 
 
 class Experiment(IExperiment):
@@ -82,7 +74,7 @@ class Experiment(IExperiment):
         # main dataset name (used for training)
         self.dataset_name = self.config["dataset"] = dataset
         # if dataset should be scaled by sklearn's StandardScaler
-        self._scaled = self.config["scaled"] = scaled
+        self.scaled = self.config["scaled"] = scaled
 
         if test_datasets is None:  # additional test datasets
             self.test_datasets = []
@@ -118,7 +110,7 @@ class Experiment(IExperiment):
         self.config["prefix"] = self.project_prefix
 
         self.project_name = f"{self.mode}-{self.model}-{self.dataset_name}"
-        if self._scaled:
+        if self.scaled:
             self.project_name = f"{self.mode}-{self.model}-scaled_{self.dataset_name}"
         if len(self.test_datasets) != 0:
             project_ending = "-tests-" + "_".join(self.test_datasets)
@@ -144,6 +136,10 @@ class Experiment(IExperiment):
         self.device = torch.device(dev)
 
         self.initialize_data(self.dataset_name)
+
+        self.test_dataloaders = {}
+        for ds in self.test_datasets:
+            self.test_dataloaders[ds] = self.initialize_data(ds, for_test=True)
 
     def acquire_params(self, path):
         """
@@ -188,20 +184,11 @@ class Experiment(IExperiment):
         # load core dataset (or additional datasets if for_test==True)
         # your dataset should have shape [n_features; n_channels; time_len]
 
-        features, labels = load_dataset(dataset, filter_indices=False)
+        features, labels = load_dataset(dataset)
 
-        if self._scaled:
-            # Time scaling
-            # TODO: check if it is correct
-            features_shape = features.shape  # [n_features; time_len; n_channels;]
-            features = features.reshape(-1, features_shape[1])
-            features = features.swapaxes(0, 1)
-
-            scaler = StandardScaler()
-            features = scaler.fit_transform(features)  # first dimension is scaled
-
-            features = features.swapaxes(0, 1)
-            features = features.reshape(features_shape)
+        if self.scaled:
+            # z-score over time
+            features = stats.zscore(features, axis=2)
 
         features = np.nan_to_num(features)
         print(f"Feature size before z-score: {features.shape}")
@@ -232,6 +219,9 @@ class Experiment(IExperiment):
 
         for t in range(features.shape[0]):
             features[t] = pearson[t][tril_inx]
+
+        if for_test:
+            return features, labels
 
         self.features = features
         self.labels = labels
@@ -302,13 +292,25 @@ class Experiment(IExperiment):
         results = {
             "test_accuracy": self.dataset_metrics["accuracy"],
             "test_score": self.dataset_metrics["score"],
-            "config_path": self.config["run_config_path"],
         }
+
+        for ds in self.test_dataloaders:
+            y_score = clf.predict_proba(self.test_dataloaders[ds][0])
+            y_pred = np.argmax(y_score, axis=-1).astype(np.int32)
+
+            report = get_classification_report(
+                y_true=self.test_dataloaders[ds][1],
+                y_pred=y_pred,
+                y_score=y_score,
+                beta=0.5,
+            )
+
+            results[f"{ds}_test_accuracy"] = report["precision"].loc["accuracy"]
+            results[f"{ds}_test_score"] = report["auc"].loc["weighted"]
 
         df = pd.DataFrame(results, index=[0])
         with open(f"{self.logdir}/runs.csv", "a") as f:
             df.to_csv(f, header=f.tell() == 0, index=False)
-        results.pop("config_path")
         self.wandb_logger.log(results)
         self.wandb_logger.finish()
 
@@ -344,6 +346,26 @@ if __name__ == "__main__":
 
     for_continue = "resume" in sys.argv
 
+    datasets = [
+        "oasis",
+        "adni",
+        "abide",
+        "abide_869",
+        "abide_roi",
+        "fbirn",
+        "fbirn_100",
+        "fbirn_200",
+        "fbirn_400",
+        "fbirn_1000",
+        "cobre",
+        "bsnip",
+        "hcp",
+        "hcp_roi",
+        "ukb",
+        "ukb_age_bins",
+        "time_fbirn",
+    ]
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mode",
@@ -377,23 +399,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--ds",
         type=str,
-        choices=[
-            "oasis",
-            "abide",
-            "fbirn",
-            "cobre",
-            "abide_869",
-            "ukb",
-            "bsnip",
-            "time_fbirn",
-            "fbirn_100",
-            "fbirn_200",
-            "fbirn_400",
-            "fbirn_1000",
-            "hcp",
-            "hcp_roi",
-            "abide_roi",
-        ],
+        choices=datasets,
         required=not for_continue,
         help="Name of the dataset to use for training",
     )
@@ -402,23 +408,7 @@ if __name__ == "__main__":
         "--test-ds",
         nargs="*",
         type=str,
-        choices=[
-            "oasis",
-            "abide",
-            "fbirn",
-            "cobre",
-            "abide_869",
-            "ukb",
-            "bsnip",
-            "time_fbirn",
-            "fbirn_100",
-            "fbirn_200",
-            "fbirn_400",
-            "fbirn_1000",
-            "hcp",
-            "hcp_roi",
-            "abide_roi",
-        ],
+        choices=datasets,
         help="Additional datasets for testing",
     )
 
