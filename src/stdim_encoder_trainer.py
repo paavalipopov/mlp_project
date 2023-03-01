@@ -152,7 +152,9 @@ class EncoderTrainer(IExperiment):
         self.classifier2.train(self.is_train_dataset)
 
         with torch.set_grad_enabled(self.is_train_dataset):
-            for self.dataset_batch_step, (x_t, x_tprev) in enumerate(tqdm(self.dataset)):
+            for self.dataset_batch_step, (x_t, x_tprev) in enumerate(
+                tqdm(self.dataset)
+            ):
                 x_t, x_tprev = x_t.to(self.device), x_tprev.to(self.device)
 
                 self.optimizer.zero_grad()

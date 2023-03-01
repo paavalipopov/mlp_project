@@ -31,6 +31,10 @@ from src.settings import LOGS_ROOT, UTCNOW
 from src.ts_data import load_dataset
 
 
+def trainer_factory():
+    pass
+
+
 class Experiment(IExperiment):
     """
     Animus-based training script. For more info see animus documentation

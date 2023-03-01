@@ -3,9 +3,126 @@
 import h5py
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import QuantileTransformer
+
+import scipy.stats as stats
 
 from src.settings import DATA_ROOT
+
+
+def data_factory(conf):
+    """
+    Return raw dataset (and additional test datasets) as dict of {"features", "labels"}
+    Features have shape [sessions, time, components] (except for stdim)
+    """
+    data, data_shape, n_classes, extra_data_shape = common_data(conf)
+
+    return data, data_shape, n_classes, extra_data_shape
+
+
+def common_data(conf):
+    assert conf.dataset is not None
+    assert conf.multiclass is not None
+    assert conf.filter_indices is not None
+
+    # load main dataset
+    data = {}
+    data["main"] = load_dataset(conf, conf.dataset)
+
+    data_shape = data["main"]["features"].shape
+    n_classes = np.unique(data["main"]["labels"]).shape[0]
+
+    # load extra test dataset
+    extra_data_shape = None
+    if conf.test_ds is not None:
+        if conf.mode != "tune":
+            for ds in conf.test_ds:
+                if ds != conf.dataset:
+                    data[ds] = load_dataset(conf, ds)
+
+                    if extra_data_shape is None:
+                        extra_data_shape = {}
+                    extra_data_shape[ds] = data[ds]["features"].shape
+
+                else:
+                    print("Found main dataset among extra datasets; ignoring it")
+        else:
+            # tune mode should have no use for extra test datasets
+            conf.test_ds = None
+
+    # z-score over time
+    if conf.scaled:
+        for ds in data:
+            data[ds]["features"] = stats.zscore(data[ds]["features"], axis=2)
+
+            # filter out invalid data
+            good_indices = []
+            for i, ts in enumerate(data[ds]["features"]):
+                if np.sum(np.isnan(ts)) == 0:
+                    good_indices += [i]
+
+            data[ds]["features"] = data[ds]["features"][good_indices]
+            data[ds]["labels"] = data[ds]["labels"][good_indices]
+
+            if ds == "main":
+                data_shape = data[ds]["features"].shape
+            else:
+                extra_data_shape[ds] = data[ds]["features"].shape
+
+    return data, data_shape, n_classes, extra_data_shape
+
+
+def load_dataset(conf, dataset):
+    """
+    Return the dataset defined by 'dataset' in conf
+    """
+
+    if dataset == "oasis":
+        data, labels = load_OASIS(
+            multiclass=conf.multiclass, filter_indices=conf.filter_indices
+        )
+    elif dataset == "adni":
+        data, labels = load_ADNI(
+            multiclass=conf.multiclass, filter_indices=conf.filter_indices
+        )
+    elif dataset == "abide":
+        data, labels = load_ABIDE1(filter_indices=conf.filter_indices)
+    elif dataset == "fbirn":
+        data, labels = load_FBIRN(filter_indices=conf.filter_indices)
+    elif dataset == "cobre":
+        data, labels = load_COBRE(filter_indices=conf.filter_indices)
+    elif dataset == "abide_869":
+        data, labels = load_ABIDE1_869(filter_indices=conf.filter_indices)
+    elif dataset == "ukb":
+        data, labels = load_UKB(filter_indices=conf.filter_indices)
+    elif dataset == "ukb_age_bins":
+        data, labels = load_UKB_age_bins(filter_indices=conf.filter_indices)
+    elif dataset == "bsnip":
+        data, labels = load_BSNIP(
+            multiclass=conf.multiclass, filter_indices=conf.filter_indices
+        )
+    elif dataset == "time_fbirn":
+        data, labels = load_time_FBIRN(filter_indices=conf.filter_indices)
+    elif dataset == "fbirn_100":
+        data, labels = load_ROI_FBIRN(100)
+    elif dataset == "fbirn_200":
+        data, labels = load_ROI_FBIRN(200)
+    elif dataset == "fbirn_400":
+        data, labels = load_ROI_FBIRN(400)
+    elif dataset == "fbirn_1000":
+        data, labels = load_ROI_FBIRN(1000)
+    elif dataset == "hcp":
+        data, labels = load_HCP(filter_indices=conf.filter_indices)
+    elif dataset == "hcp_roi":
+        data, labels = load_ROI_HCP()
+    elif dataset == "abide_roi":
+        data, labels = load_ROI_ABIDE()
+    else:
+        print(f"'{conf.dataset}' dataset is not found")
+        raise NotImplementedError()
+
+    data = np.swapaxes(data, 1, 2)  # new: [sessions, time, components]
+
+    return {"features": data, "labels": labels}
 
 
 def load_ABIDE1(
@@ -796,56 +913,5 @@ def load_ROI_ABIDE(
     labels = pd.read_csv(labels_path, header=None)
     labels = labels.values.flatten().astype("int") - 1
     # (871,)
-
-    return data, labels
-
-
-def load_dataset(dataset: str, multiclass: bool = False, filter_indices: bool = True):
-    """
-    Return the dataset defined by 'dataset'
-
-    dataset: str
-    - dataset name
-    filter_indices: bool = True
-    - whether ICA components should be filtered
-    """
-
-    if dataset == "oasis":
-        data, labels = load_OASIS(multiclass=multiclass, filter_indices=filter_indices)
-    elif dataset == "adni":
-        data, labels = load_ADNI(multiclass=multiclass, filter_indices=filter_indices)
-    elif dataset == "abide":
-        data, labels = load_ABIDE1(filter_indices=filter_indices)
-    elif dataset == "fbirn":
-        data, labels = load_FBIRN(filter_indices=filter_indices)
-    elif dataset == "cobre":
-        data, labels = load_COBRE(filter_indices=filter_indices)
-    elif dataset == "abide_869":
-        data, labels = load_ABIDE1_869(filter_indices=filter_indices)
-    elif dataset == "ukb":
-        data, labels = load_UKB(filter_indices=filter_indices)
-    elif dataset == "ukb_age_bins":
-        data, labels = load_UKB_age_bins(filter_indices=filter_indices)
-    elif dataset == "bsnip":
-        data, labels = load_BSNIP(multiclass=multiclass, filter_indices=filter_indices)
-    elif dataset == "time_fbirn":
-        data, labels = load_time_FBIRN(filter_indices=filter_indices)
-    elif dataset == "fbirn_100":
-        data, labels = load_ROI_FBIRN(100)
-    elif dataset == "fbirn_200":
-        data, labels = load_ROI_FBIRN(200)
-    elif dataset == "fbirn_400":
-        data, labels = load_ROI_FBIRN(400)
-    elif dataset == "fbirn_1000":
-        data, labels = load_ROI_FBIRN(1000)
-    elif dataset == "hcp":
-        data, labels = load_HCP(filter_indices=filter_indices)
-    elif dataset == "hcp_roi":
-        data, labels = load_ROI_HCP()
-    elif dataset == "abide_roi":
-        data, labels = load_ROI_ABIDE()
-    else:
-        print(f"'{dataset}' dataset is not found")
-        raise NotImplementedError()
 
     return data, labels

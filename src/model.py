@@ -2,78 +2,55 @@
 """Models for experiments and functions for setting them up"""
 import numpy as np
 import torch
-from torch import nn, optim
+from torch import nn
 import torch.nn.functional as F
-from scipy.stats import randint, uniform, loguniform
-
-from src.scripts.ts_dl_experiments import Experiment
-from src.settings import LOGS_ROOT
 
 
-def get_model(exp: Experiment, model, model_config):
-    if model in ["mlp", "wide_mlp", "deep_mlp"]:
+def model_factory(conf, model_config):
+    if conf.model in ["mlp", "wide_mlp", "deep_mlp"]:
         return MLP(model_config)
-    elif model == "attention_mlp":
+    elif conf.model == "attention_mlp":
         return AttentionMLP(model_config)
-    elif model == "new_attention_mlp":
+    elif conf.model == "new_attention_mlp":
         return NewAttentionMLP(model_config)
-    elif model == "meta_mlp":
+    elif conf.model == "meta_mlp":
         return MetaMLP(model_config)
-    elif model == "window_mlp":
+    elif conf.model == "window_mlp":
         return WindowMLP(model_config)
-    elif model == "pe_mlp":
+    elif conf.model == "pe_mlp":
         return PE_MLP(model_config)
-    elif model == "pe_att_mlp":
+    elif conf.model == "pe_att_mlp":
         return PE_Att_MLP(model_config)
-    elif model == "mlp_tf":
+    elif conf.model == "mlp_tf":
         return MLP_TF(model_config)
 
-    elif model == "lstm":
+    elif conf.model == "lstm":
         return LSTM(model_config)
-    elif model == "noah_lstm":
+    elif conf.model == "noah_lstm":
         return NoahLSTM(model_config)
 
-    elif model == "transformer":
+    elif conf.model == "transformer":
         return Transformer(model_config)
-    elif model == "mean_transformer":
+    elif conf.model == "mean_transformer":
         return MeanTransformer(model_config)
-    elif model == "pe_transformer":
+    elif conf.model == "pe_transformer":
         return PE_Transformer(model_config)
 
-    elif model == "stdim":
-        from src.stdim_encoder_trainer import EncoderTrainer
+    # elif conf.model == "stdim":
+    #     from src.stdim_encoder_trainer import EncoderTrainer
 
-        encoder = EncoderTrainer(
-            encoder_config=exp.model_config["encoder"],
-            dataset=exp.encoder_dataset,
-            logpath=exp.runpath,
-            wandb_logger=exp.wandb_logger,
-            batch_size=exp.batch_size,
-            device=exp.device,
-        ).train_encoder()
+    #     encoder = EncoderTrainer(
+    #         encoder_config=exp.model_config["encoder"],
+    #         dataset=exp.encoder_dataset,
+    #         logpath=exp.runpath,
+    #         wandb_logger=exp.wandb_logger,
+    #         batch_size=exp.batch_size,
+    #         device=exp.device,
+    #     ).train_encoder()
 
-        return STDIM(encoder, Probe(exp.model_config["probe"]))
+    #     return STDIM(encoder, Probe(exp.model_config["probe"]))
 
     raise NotImplementedError()
-
-
-def get_criterion(model):
-    return nn.CrossEntropyLoss()
-
-
-def get_optimizer(exp: Experiment, model_config):
-    if exp.model == "stdim":
-        optimizer = optim.Adam(
-            exp._model.probe.parameters(),
-            lr=float(model_config["lr"]),
-        )
-    else:
-        optimizer = optim.Adam(
-            exp._model.parameters(),
-            lr=float(model_config["lr"]),
-        )
-
-    return optimizer
 
 
 def positional_encoding(x, n=10000, scaled: bool = True):
@@ -802,7 +779,9 @@ class Transformer(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size, nhead=num_heads, batch_first=True
         )
-        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        transformer_encoder = nn.TransformerEncoder(
+            encoder_layer, num_layers=num_layers
+        )
         layers = [
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
@@ -837,7 +816,9 @@ class MeanTransformer(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size, nhead=num_heads, batch_first=True
         )
-        transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        transformer_encoder = nn.TransformerEncoder(
+            encoder_layer, num_layers=num_layers
+        )
         layers = [
             nn.Linear(input_size, hidden_size),
             nn.ReLU(),
