@@ -219,7 +219,7 @@ class BasicTrainer:
         self.train()
 
         print("Loading best model")
-        model_logpath = f"{self.save_path}best_model.pt"
+        model_logpath = f"{self.save_path}/best_model.pt"
         checkpoint = torch.load(
             model_logpath, map_location=lambda storage, loc: storage
         )
@@ -232,7 +232,7 @@ class BasicTrainer:
         print("Done!")
 
         if not self.cfg.exp.preserve_checkpoints:
-            os.remove(f"{self.save_path}best_model.pt")
+            os.remove(f"{self.save_path}/best_model.pt")
 
         return self.test_results
 
@@ -281,6 +281,6 @@ class EarlyStopping:
             model = model.module
 
         if issubclass(model.__class__, torch.nn.Module):
-            torch.save(model.state_dict(), self.path + "best_model.pt")
+            torch.save(model.state_dict(), f"{self.path}/best_model.pt")
         else:
-            torch.save(model, self.path + "best_model.pt")
+            torch.save(model, f"{self.path}/best_model.pt")
