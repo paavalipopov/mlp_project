@@ -1,0 +1,17 @@
+mode: tune
+preserve_checkpoints: False
+single_HP: False
+cfg_path: null # full path to model config [optional]
+tuning_holdout: False # for UKB
+tuning_split: null
+
+n_trials: 3
+n_splits: 5
+max_epochs: 2
+batch_size: 64
+patience: 30
+# n_trials: 50
+# n_splits: 5
+# max_epochs: 400
+# batch_size: 64
+# patience: 30

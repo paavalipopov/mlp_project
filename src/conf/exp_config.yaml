@@ -1,0 +1,11 @@
+defaults:
+  - _self_
+  - exp: ???
+  - model: ???
+  - dataset: ???
+
+
+# wandb and project name
+prefix: null
+wandb_silent: True
+wandb_offline: False

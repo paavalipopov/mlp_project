@@ -1,0 +1,11 @@
+name: mlp
+allow-test-ds: True
+
+data_type: TS
+require_data_postproc: False
+
+custom_dataloader: False
+custom_criterion: False
+custom_optimizer: False
+custom_scheduler: False
+custom_trainer: False

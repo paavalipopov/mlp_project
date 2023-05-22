@@ -1,0 +1,5 @@
+name: fbirn
+zscore: False
+filter_indices: True
+
+compatible_datasets: [cobre, bsnip]
