@@ -1,10 +1,8 @@
-# pylint: disable=too-many-statements, too-many-locals, invalid-name, unbalanced-tuple-unpacking
+# pylint: disable=too-many-statements, too-many-locals, invalid-name, unbalanced-tuple-unpacking, no-value-for-parameter
 """Script for running experiments: tuning and testing hypertuned models"""
-import sys
 import os
-import json
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import OmegaConf
 import hydra
 
 import pandas as pd
@@ -199,6 +197,7 @@ def start(cfg):
 
 
 def tune(cfg, original_data, outer_k=None):
+    """Given config and data, run several cross-validated rounds of optimal HP search"""
     # for each trial get new set of HPs, test them using CV
     for trial in range(0, cfg.exp.n_trials):
         # get random model config
@@ -252,6 +251,7 @@ def tune(cfg, original_data, outer_k=None):
 
 
 def run_trial(cfg, model_cfg, dataloaders):
+    """Given config and prepared dataloaders, build and train the model and return test results"""
     model = model_factory(cfg, model_cfg)
     criterion = criterion_factory(cfg, model_cfg)
     optimizer = optimizer_factory(cfg, model, model_cfg)
