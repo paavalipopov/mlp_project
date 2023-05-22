@@ -1,26 +1,30 @@
 # pylint: disable=no-member, too-many-locals, too-many-arguments, too-many-instance-attributes, invalid-name, attribute-defined-outside-init
 """Training scripts"""
+from importlib import import_module
 import os
-import json
 import time
+import warnings
 
-import numpy as np
 import torch
+from torch import nn
+import numpy as np
 
 from tqdm import tqdm
 from apto.utils.report import get_classification_report
 
-from src.utils import EarlyStopping, NpEncoder
+from omegaconf import OmegaConf, open_dict
+
+warnings.filterwarnings("ignore")
 
 
 def trainer_factory(
-    conf, model_config, dataloaders, model, criterion, optimizer, scheduler, logger
+    cfg, model_cfg, dataloaders, model, criterion, optimizer, scheduler, logger
 ):
     """Trainer factory"""
-    if conf.model in ["lstm", "mean_lstm", "transformer", "mean_transformer", "dice"]:
-        trainer = Trainer(
-            vars(conf),
-            model_config,
+    if "custom_trainer" not in cfg.model or not cfg.model.custom_trainer:
+        trainer = BasicTrainer(
+            cfg,
+            model_cfg,
             dataloaders,
             model,
             criterion,
@@ -29,18 +33,44 @@ def trainer_factory(
             logger,
         )
     else:
-        raise ValueError(f"{conf.model} is not recognized")
+        try:
+            model_module = import_module(f"src.models.{cfg.model.name}")
+        except ModuleNotFoundError as e:
+            raise ModuleNotFoundError(
+                f"No module named '{cfg.model.name}' \
+                                    found in 'src.models'. Check if model name \
+                                    in config file and its module name are the same"
+            ) from e
+
+        try:
+            get_trainer = model_module.get_trainer
+        except AttributeError as e:
+            raise AttributeError(
+                f"'src.models.{cfg.model.name}' has no function\
+                                'get_trainer'. Is the function misnamed/not defined?"
+            ) from e
+
+        trainer = get_trainer(
+            cfg,
+            model_cfg,
+            dataloaders,
+            model,
+            criterion,
+            optimizer,
+            scheduler,
+            logger,
+        )
 
     return trainer
 
 
-class Trainer:
+class BasicTrainer:
     """Basic training script"""
 
     def __init__(
         self,
-        conf,
-        model_conf,
+        cfg,
+        model_cfg,
         dataloaders,
         model,
         criterion,
@@ -48,9 +78,8 @@ class Trainer:
         scheduler,
         logger,
     ) -> None:
-
-        self.config = conf
-        self.model_config = model_conf
+        self.cfg = cfg
+        self.model_cfg = model_cfg
         self.dataloaders = dataloaders
         self.model = model
         self.criterion = criterion
@@ -61,13 +90,13 @@ class Trainer:
         params = self.count_params(self.model)
         self.logger.summary["params"] = params
 
-        self.epochs = self.config["max_epochs"]
-        self.save_path = self.config["run_dir"]
+        self.epochs = self.cfg.exp.max_epochs
+        self.save_path = self.cfg.run_dir
 
         self.early_stopping = EarlyStopping(
             path=self.save_path,
             minimize=True,
-            patience=self.config["patience"],
+            patience=self.cfg.exp.patience,
         )
 
         # set device
@@ -76,18 +105,25 @@ class Trainer:
         else:
             dev = "cpu"
         print(f"Used device: {dev}")
-        self.config["device"] = dev
+        with open_dict(self.cfg):
+            self.cfg.device = dev
         self.device = torch.device(dev)
 
         self.model = model.to(self.device)
 
         # log configs
-        self.logger.config.update({"general": self.config})
-        self.logger.config.update({"model": self.model_config})
+        self.logger.config.update(
+            {"general": OmegaConf.to_container(self.cfg, resolve=True)}
+        )
+        self.logger.config.update(
+            {"model": OmegaConf.to_container(self.model_cfg, resolve=True)}
+        )
 
-        # save model configs in the run's directory
-        with open(self.save_path + "model_config.json", "w", encoding="utf8") as fp:
-            json.dump(self.model_config, fp, indent=2, cls=NpEncoder)
+        # save configs in the run's directory
+        with open(f"{self.save_path}/config.yaml", "w", encoding="utf8") as f:
+            OmegaConf.save(self.cfg, f)
+        with open(f"{self.save_path}/model_config.yaml", "w", encoding="utf8") as f:
+            OmegaConf.save(self.model_cfg, f)
 
     def count_params(self, model, only_requires_grad: bool = False):
         "count number trainable parameters in a pytorch model"
@@ -195,7 +231,56 @@ class Trainer:
         print(f"Test results: {self.test_results}")
         print("Done!")
 
-        if not self.config["preserve_checkpoints"]:
+        if not self.cfg.exp.preserve_checkpoints:
             os.remove(f"{self.save_path}best_model.pt")
 
         return self.test_results
+
+
+class EarlyStopping:
+    """Early stops the training if the given score does not improve after a given patience."""
+
+    def __init__(
+        self,
+        path: str,
+        minimize: bool,
+        patience: int = 30,
+    ):
+        assert minimize in [True, False]
+
+        self.path = path
+        self.minimize = minimize
+        self.patience = patience
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+
+    def __call__(self, new_score, model, epoch):
+        if self.best_score is None:
+            self.best_score = new_score
+            self.save_checkpoint(model)
+        else:
+            if self.minimize:
+                change = self.best_score - new_score
+            else:
+                change = new_score - self.best_score
+
+            if change > 0.0:
+                self.counter = 0
+                self.best_score = new_score
+                self.save_checkpoint(model)
+            else:
+                self.counter += 1
+                if self.counter >= self.patience:
+                    self.early_stop = True
+
+    def save_checkpoint(self, model):
+        # based on callback from animus package
+        """Saves model if criterion is met"""
+        if isinstance(model, (nn.DataParallel, nn.parallel.DistributedDataParallel)):
+            model = model.module
+
+        if issubclass(model.__class__, torch.nn.Module):
+            torch.save(model.state_dict(), self.path + "best_model.pt")
+        else:
+            torch.save(model, self.path + "best_model.pt")
