@@ -25,7 +25,7 @@ default_HP: False # optional (default: False), True, False;
 
 require_data_postproc: False # optional (default: False), True, False; 
 # if you need to reshape the loaded dataset according to model_cfg, set to True. 
-# 'True' requires 'data_postproc(original_data, cfg, model_cfg)' defined in the model's module.
+# 'True' requires 'data_postproc(cfg, model_cfg, original_data)' defined in the model's module.
 # see 'src.data.data_postfactory' for reference
 
 custom_dataloader: False # optional (default: False), True, False; 
