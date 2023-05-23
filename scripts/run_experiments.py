@@ -21,6 +21,13 @@ from src.trainer import trainer_factory
 def start(cfg):
     """Main script for starting experiments"""
 
+    # a few conditions checks
+    if "single_HPs" in cfg and cfg.single_HPs:
+        assert (
+            cfg.model_cfg_path is not None
+        ), "You must spcify 'model_cfg_path' if single_HPs is set to True"
+        assert isinstance(cfg.model_cfg_path, str)
+
     # set wandb environment
     os.environ["WANDB_SILENT"] = "true" if cfg.wandb_silent else "false"
     os.environ["WANDB_MODE"] = "offline" if cfg.wandb_offline else "online"
@@ -32,174 +39,38 @@ def start(cfg):
         OmegaConf.save(cfg, f)
 
     # load dataset, compute FNCs if model requires them.
-    # if exp.single_HP and exp.tuning_holdout set to True,
-    # returns tuning/experimental data depending on exp.mode
     original_data = data_factory(cfg)
 
     print(OmegaConf.to_yaml(cfg))
 
-    if cfg.exp.mode == "tune":
-        if cfg.exp.single_HP:
+    if cfg.mode.name == "tune":
+        if ("single_HPs" in cfg and cfg.single_HPs) or (
+            "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout
+        ):
             # use the whole original_data for tuning.
             # the obtained HPs are better to be used on other datasets
-            # (unless exp.tuning_holdout is True),
+            # (unless cfg.dataset.tuning_holdout is True),
             # otherwise there is a testing-on-train-data danger
             tune(cfg=cfg, original_data=original_data)
 
         else:
             # tune each original_data CV fold independently
-            for k in range(0, cfg.exp.n_splits):
+            for k in range(0, cfg.mode.n_splits):
                 tune_fold_data = original_data
                 tune_fold_data["main"], _ = cross_validation_split(
-                    tune_fold_data["main"], cfg.exp.n_splits, k
+                    tune_fold_data["main"], cfg.mode.n_splits, k
                 )
                 tune(cfg=cfg, original_data=tune_fold_data, outer_k=k)
 
-    # if cfg.exp.mode == "tune":
-    #     # outer CV: for each test set, we are looking for a unique set of optimal hyperparams
-    #     for outer_k in range(0, cfg.exp.n_splits):
-    #         # num trials: number of hyperparams sets to test
-    #         for trial in range(0, cfg.exp.n_trials):
-    #             model_config = model_config_factory(cfg)
-    #             # some models require data postprocessing (based on their config)
-    #             data, conf.data_info = data_postfactory(
-    #                 cfg,
-    #                 model_config,
-    #                 original_data,
-    #             )
-    #             model_config["data_info"] = conf.data_info
-
-    #             set_run_name(cfg, outer_k, trial, inner_k)
-    #             os.makedirs(conf.run_dir, exist_ok=True)
-
-    #             ###########
-
-    #             # inner CV: CV of the chosen hyperparams
-    #             for inner_k in range(conf.n_splits):
-    #                 print(
-    #                     f"Running tune: k: {outer_k:02d}, Trial: {trial:03d}, \
-    #                         Inner k: {inner_k:02d},"
-    #                 )
-
-    #                 (
-    #                     conf.wandb_trial_name,
-    #                     conf.outer_k_dir,
-    #                     conf.trial_dir,
-    #                     conf.run_dir,
-    #                 ) = run_name(conf, outer_k, trial, inner_k)
-    #                 os.makedirs(conf.run_dir, exist_ok=True)
-
-    #                 dataloaders = dataloader_factory(
-    #                     conf, data, outer_k, trial, inner_k
-    #                 )
-    #                 model = model_factory(conf, model_config)
-    #                 criterion = criterion_factory(conf, model_config)
-    #                 optimizer = optimizer_factory(conf, model, model_config)
-    #                 scheduler = scheduler_factory(conf, optimizer, model_config)
-
-    #                 logger, model_config["link"] = logger_factory(conf, model_config)
-
-    #                 trainer = trainer_factory(
-    #                     conf,
-    #                     model_config,
-    #                     dataloaders,
-    #                     model,
-    #                     criterion,
-    #                     optimizer,
-    #                     scheduler,
-    #                     logger,
-    #                 )
-    #                 results = trainer.run()
-    #                 # save results of nested CV
-    #                 df = pd.DataFrame(results, index=[0])
-    #                 with open(conf.trial_dir + "runs.csv", "a", encoding="utf8") as f:
-    #                     df.to_csv(f, header=f.tell() == 0, index=False)
-
-    #                 logger.finish()
-
-    #             # save model config
-    #             with open(
-    #                 conf.trial_dir + "model_config.json", "w", encoding="utf8"
-    #             ) as fp:
-    #                 json.dump(model_config, fp, indent=2, cls=NpEncoder)
-    #             # read inner CV results, save the average in the fold dir
-    #             df = pd.read_csv(conf.trial_dir + "runs.csv")
-    #             score = np.mean(df["test_score"].to_numpy())
-    #             loss = np.mean(df["test_average_loss"].to_numpy())
-    #             df = pd.DataFrame(
-    #                 {
-    #                     "trial": trial,
-    #                     "score": score,
-    #                     "loss": loss,
-    #                     "path_to_config": conf.trial_dir + "model_config.json",
-    #                 },
-    #                 index=[0],
-    #             )
-    #             with open(conf.outer_k_dir + "runs.csv", "a", encoding="utf8") as f:
-    #                 df.to_csv(f, header=f.tell() == 0, index=False)
-
-    # elif conf.mode == "exp":
-    #     # outer CV: for each test set, we are loading a unique set of optimal hyperparams
-    #     for outer_k in range(start_k, conf.n_splits):
-    #         # loading best config requires project_name
-    #         model_config = model_config_factory(conf, k=outer_k)
-
-    #         # some models require data postprocessing (based on their config)
-    #         data, conf.data_info = data_postfactory(
-    #             conf,
-    #             model_config,
-    #             original_data,
-    #         )
-
-    #         # num trials: for each test set, we are splitting training set into train/val randomly
-    #         if outer_k != start_k:
-    #             start_trial = 0
-    #         for trial in range(start_trial, conf.n_trials):
-    #             print(f"Running exp: k: {outer_k:02d}, Trial: {trial:03d}")
-
-    #             (conf.wandb_trial_name, conf.outer_k_dir, conf.run_dir) = run_name(
-    #                 conf, outer_k, trial
-    #             )
-    #             os.makedirs(conf.run_dir, exist_ok=True)
-    #             with open(
-    #                 conf.outer_k_dir + "model_config.json", "w", encoding="utf8"
-    #             ) as fp:
-    #                 json.dump(model_config, fp, indent=2, cls=NpEncoder)
-
-    #             dataloaders = dataloader_factory(conf, data, outer_k, trial)
-    #             model = model_factory(conf, model_config)
-    #             criterion = criterion_factory(conf, model_config)
-    #             optimizer = optimizer_factory(conf, model, model_config)
-    #
-
-    #             logger, model_config["link"] = logger_factory(conf, model_config)
-
-    #             trainer = trainer_factory(
-    #                 conf,
-    #                 model_config,
-    #                 dataloaders,
-    #                 model,
-    #                 criterion,
-    #                 optimizer,
-    #                 scheduler,
-    #                 logger,
-    #             )
-    #             results = trainer.run()
-    #             # save results of the trial
-    #             df = pd.DataFrame(results, index=[0])
-    #             with open(conf.project_dir + "runs.csv", "a", encoding="utf8") as f:
-    #                 df.to_csv(f, header=f.tell() == 0, index=False)
-
-    #             logger.finish()
-
-    # else:
-    #     raise ValueError(f"{conf.model} is not recognized")
+    elif cfg.mode.name == "exp":
+        experiment(cfg=cfg, original_data=original_data)
 
 
 def tune(cfg, original_data, outer_k=None):
     """Given config and data, run several cross-validated rounds of optimal HP search"""
+
     # for each trial get new set of HPs, test them using CV
-    for trial in range(0, cfg.exp.n_trials):
+    for trial in range(0, cfg.mode.n_trials):
         # get random model config
         model_cfg = model_config_factory(cfg)
         # reshape data according to model config (if needed)
@@ -209,7 +80,7 @@ def tune(cfg, original_data, outer_k=None):
             original_data,
         )
         # run nested CV
-        for inner_k in range(0, cfg.exp.n_splits):
+        for inner_k in range(0, cfg.mode.n_splits):
             set_run_name(cfg, outer_k=outer_k, trial=trial, inner_k=inner_k)
             os.makedirs(cfg.run_dir, exist_ok=True)
             dataloaders = dataloader_factory(cfg, data, k=inner_k)
@@ -248,6 +119,43 @@ def tune(cfg, original_data, outer_k=None):
         best_config = OmegaConf.load(f)
     with open(f"{cfg.k_dir}/best_config.yaml", "w", encoding="utf8") as f:
         OmegaConf.save(best_config, f)
+
+
+def experiment(cfg, original_data):
+    """Given config and data, run cross-validated rounds with optimal HPs"""
+
+    for outer_k in range(0, cfg.mode.n_splits):
+        # for each fold get optimal set of HPs,
+        # unless single_HP is True,
+        # or model HPs are hardcoded
+        model_cfg = model_config_factory(cfg, outer_k)
+        # reshape data according to model config (if needed)
+        data = data_postfactory(
+            cfg,
+            model_cfg,
+            original_data,
+        )
+        # for outer_k test fold, train model n_trials times,
+        # using different train/valid split each time
+        for trial in range(0, cfg.mode.n_trials):
+            set_run_name(cfg, outer_k=outer_k, trial=trial)
+            os.makedirs(cfg.run_dir, exist_ok=True)
+            dataloaders = dataloader_factory(cfg, data, k=outer_k, trial=trial)
+            results = run_trial(cfg, model_cfg, dataloaders)
+
+            # save run's results in the folds directory
+            df = pd.DataFrame(results, index=[0])
+            with open(f"{cfg.k_dir}/fold_runs.csv", "a", encoding="utf8") as f:
+                df.to_csv(f, header=f.tell() == 0, index=False)
+
+        # save outer_k's model config
+        with open(f"{cfg.k_dir}/model_config.yaml", "w", encoding="utf8") as f:
+            OmegaConf.save(model_cfg, f)
+
+        # load and save the fold's results in the project directory
+        df = pd.read_csv(f"{cfg.k_dir}/fold_runs.csv")
+        with open(f"{cfg.project_dir}/runs.csv", "a", encoding="utf8") as f:
+            df.to_csv(f, header=f.tell() == 0, index=False)
 
 
 def run_trial(cfg, model_cfg, dataloaders):
