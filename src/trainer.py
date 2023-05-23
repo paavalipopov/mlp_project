@@ -90,19 +90,24 @@ class BasicTrainer:
         params = self.count_params(self.model)
         self.logger.summary["params"] = params
 
-        self.epochs = self.cfg.exp.max_epochs
+        self.epochs = self.cfg.mode.max_epochs
         self.save_path = self.cfg.run_dir
 
         self.early_stopping = EarlyStopping(
             path=self.save_path,
             minimize=True,
-            patience=self.cfg.exp.patience,
+            patience=self.cfg.mode.patience,
         )
 
         # set device
-        if torch.cuda.is_available():
+        if getattr(torch, "has_mps", False):
+            # Apple Silicon
+            dev = "mps"
+        elif torch.cuda.is_available():
+            # CUDA
             dev = "cuda:0"
         else:
+            # CPU
             dev = "cpu"
         print(f"Used device: {dev}")
         with open_dict(self.cfg):
@@ -231,7 +236,7 @@ class BasicTrainer:
         print(f"Test results: {self.test_results}")
         print("Done!")
 
-        if not self.cfg.exp.preserve_checkpoints:
+        if not self.cfg.mode.preserve_checkpoints:
             os.remove(f"{self.save_path}/best_model.pt")
 
         return self.test_results

@@ -1,4 +1,4 @@
-# pylint: disable=invalid-name
+# pylint: disable=invalid-name, too-few-public-methods
 """Models for experiments and functions for setting them up"""
 
 from importlib import import_module
@@ -8,7 +8,7 @@ from torch import nn, optim
 def criterion_factory(cfg, model_cfg):
     """Criterion factory"""
     if "custom_criterion" not in cfg.model or not cfg.model.custom_criterion:
-        criterion = CEloss(model_cfg)
+        criterion = CEloss()
     else:
         try:
             model_module = import_module(f"src.models.{cfg.model.name}")
@@ -27,10 +27,7 @@ def criterion_factory(cfg, model_cfg):
                                 'get_criterion'. Is the function misnamed/not defined?"
             ) from e
 
-        try:
-            criterion = get_criterion(model_cfg)
-        except TypeError:
-            criterion = get_criterion()
+        criterion = get_criterion(model_cfg)
 
     return criterion
 
@@ -38,7 +35,7 @@ def criterion_factory(cfg, model_cfg):
 class CEloss:
     """Basic Cross-entropy loss"""
 
-    def __init__(self, model_config):
+    def __init__(self):
         self.ce_loss = nn.CrossEntropyLoss()
 
     def __call__(self, logits, target, model, device):
@@ -105,10 +102,7 @@ def optimizer_factory(cfg, model, model_cfg):
                                 'get_optimizer'. Is the function misnamed/not defined?"
             ) from e
 
-        try:
-            optimizer = get_optimizer(model_cfg)
-        except TypeError:
-            optimizer = get_optimizer()
+        optimizer = get_optimizer(model, model_cfg)
 
     return optimizer
 
@@ -135,10 +129,7 @@ def scheduler_factory(cfg, optimizer, model_cfg):
                                 'get_scheduler'. Is the function misnamed/not defined?"
             ) from e
 
-        try:
-            scheduler = get_scheduler(optimizer, model_cfg)
-        except TypeError:
-            scheduler = get_scheduler(optimizer)
+        scheduler = get_scheduler(optimizer, model_cfg)
 
     return scheduler
 

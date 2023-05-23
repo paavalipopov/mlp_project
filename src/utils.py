@@ -23,14 +23,24 @@ def set_project_name(cfg):
             prefix = cfg.prefix.replace("-", "_")
             used_default_prefix = False
 
-    project_name = f"{prefix}-{cfg.exp.mode}-{cfg.model.name}-{cfg.dataset.name}"
+    model_name = cfg.model.name
+    if "default_HP" in cfg.model and cfg.model.default_HP:
+        model_name += "_defHP"
 
+    dataset_name = cfg.dataset.name
     if "multiclass" in cfg.dataset and cfg.dataset.multiclass:
-        project_name += "-multiclass"
+        dataset_name += "_mc"
     if "zscore" in cfg.dataset and cfg.dataset.zscore:
-        project_name += "-zscore"
-    if "single_HP" in cfg.exp and cfg.exp.single_HP:
-        project_name += "-single_HP"
+        dataset_name += "_zSC"
+    if "filter_indices" in cfg.dataset and not cfg.dataset.filter_indices:
+        dataset_name += "_allIDC"
+    if "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout:
+        dataset_name += "_th"
+
+    project_name = f"{prefix}-{cfg.mode.name}-{model_name}-{dataset_name}"
+
+    if "single_HPs" in cfg and cfg.single_HPs:
+        project_name += "-single_HPs"
 
     project_dir = str(LOGS_ROOT.joinpath(project_name))
 
@@ -42,8 +52,12 @@ def set_project_name(cfg):
 
 def set_run_name(cfg, outer_k=None, trial=None, inner_k=None):
     """set wandb run name and run directories"""
-    if cfg.exp.mode == "tune":
-        if cfg.exp.single_HP:
+    if cfg.mode.name == "tune":
+        if ("single_HP" in cfg and cfg.single_HP) or (
+            "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout
+        ):
+            # if cfg.single_HP or cfg.dataset.tuning_holdout are True,
+            # we are looking for a single optimal set of HPs
             wandb_trial_name = f"trial_{trial:04d}-k_{inner_k:02d}"
             k_dir = f"{cfg.project_dir}"
         else:
@@ -58,7 +72,7 @@ def set_run_name(cfg, outer_k=None, trial=None, inner_k=None):
             cfg.trial_dir = trial_dir
             cfg.run_dir = run_dir
 
-    elif cfg.exp.mode == "exp":
+    elif cfg.mode.name == "exp":
         wandb_trial_name = f"k_{outer_k:02d}-trial_{trial:04d}"
         k_dir = f"{cfg.project_dir}/k_{outer_k:02d}"
         run_dir = f"{k_dir}/trial_{trial:04d}"
