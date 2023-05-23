@@ -1,8 +1,11 @@
+# pylint: disable=too-many-function-args, invalid-name
+""" FBIRN ICA dataset loading script"""
 import h5py
 import numpy as np
 import pandas as pd
 
 from src.settings import DATA_ROOT
+
 
 def load_data(
     cfg,
@@ -14,7 +17,7 @@ def load_data(
     Return FBIRN data
 
     Output:
-    features with shape [subjects, time, components],
+    features with shape [n_samples, time_length, feature_size],
     labels
     """
 
@@ -40,5 +43,6 @@ def load_data(
     labels = labels.values.flatten().astype("int") - 1
 
     data = np.swapaxes(data, 1, 2)
+    # data.shape = [n_samples, time_length, feature_size]
 
     return data, labels
