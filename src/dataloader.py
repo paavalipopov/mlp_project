@@ -29,7 +29,7 @@ def dataloader_factory(cfg, data, k, trial=None):
                                 'get_dataloader'. Is the function misnamed/not defined?"
             ) from e
 
-        dataloader = get_dataloader()
+        dataloader = get_dataloader(cfg, data, k, trial=None)
 
     return dataloader
 
@@ -39,30 +39,43 @@ def common_dataloader(cfg, data, k, trial=None):
     Return common dataloaders
     dataloaders are a dictionary of
     {
-        "train": data,
-        "valid": data,
-        "test": data,
-        "any additional test": data,
+        "train": dataloader,
+        "valid": dataloader,
+        "test": dataloader,
+        "any additional test": dataloader,
     }
+    Expects the data produced by src.data.data_factory() with common_processor:
+        Input data is a dict of
+        {
+            "main":
+                {
+                "TS": data, (if model is TS or TS-FNC)
+                "FNC": data, (if model is FNC, tri-FNC, or TS-FNC)
+                "labels": data,
+                },
+            "additional test datasets with similar shape"
+        }
+
+    Output dataloaders return tuples with ("TS", "FNC", "labels"), ("TS", "labels"), or ("FNC", "labels") data order
     """
     split_data = {"train": {}, "valid": {}, "test": {}}
 
     # train/test split
     split_data["train"], split_data["test"] = cross_validation_split(
-        data["main"], cfg.exp.n_splits, k
+        data["main"], cfg.mode.n_splits, k
     )
 
     # train/val split
     splitter = StratifiedShuffleSplit(
-        n_splits=cfg.exp.n_trials,
-        test_size=split_data["train"]["labels"].shape[0] // cfg.exp.n_splits,
+        n_splits=cfg.mode.n_trials,
+        test_size=split_data["train"]["labels"].shape[0] // cfg.mode.n_splits,
         random_state=42,
     )
     tr_val_splits = list(
         splitter.split(split_data["train"]["labels"], split_data["train"]["labels"])
     )
     train_index, val_index = (
-        tr_val_splits[0] if cfg.exp.mode == "tune" else tr_val_splits[trial]
+        tr_val_splits[0] if cfg.mode.name == "tune" else tr_val_splits[trial]
     )
     for key in split_data["train"]:
         split_data["train"][key], split_data["valid"][key] = (
@@ -95,7 +108,7 @@ def common_dataloader(cfg, data, k, trial=None):
 
         dataloaders[key] = DataLoader(
             TensorDataset(*unpacked_tensors),
-            batch_size=cfg.exp.batch_size,
+            batch_size=cfg.mode.batch_size,
             num_workers=0,
             shuffle=key == "train",
         )
@@ -104,6 +117,15 @@ def common_dataloader(cfg, data, k, trial=None):
 
 
 def cross_validation_split(data, n_splits, k):
+    """
+    Split data into train and test data using StratifiedKFold.
+    Input data should be dict
+    {
+        "single_or_multiple_keys": data,
+        "labels": data (required),
+    }
+    Output train and test data inherit the same keys
+    """
     train_data = {}
     test_data = {}
 
