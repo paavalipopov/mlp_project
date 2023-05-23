@@ -138,6 +138,7 @@ dmypy.json
 .yaml
 assets/
 wandb/
+outputs/
 examples/images
 examples/roi_experiments
 examples/plots_data
