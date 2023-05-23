@@ -12,7 +12,7 @@ def logger_factory(cfg, model_cfg):
     )
 
     # save tuning process wandb link
-    if cfg.exp.mode == "tune":
+    if cfg.mode.name == "tune":
         link = logger.get_url()
         with open_dict(model_cfg):
             model_cfg.link = link
