@@ -4,11 +4,13 @@ import h5py
 import numpy as np
 import pandas as pd
 
+from omegaconf import DictConfig
+
 from src.settings import DATA_ROOT
 
 
 def load_data(
-    cfg,
+    cfg: DictConfig,
     dataset_path: str = DATA_ROOT.joinpath("fbirn/FBIRN_AllData.h5"),
     indices_path: str = DATA_ROOT.joinpath("fbirn/correct_indices_GSP.csv"),
     labels_path: str = DATA_ROOT.joinpath("fbirn/labels_FBIRN_new.csv"),
