@@ -102,7 +102,7 @@ class MLP(nn.Module):
 
         self.fc = nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         bs, tl, fs = x.shape  # [batch_size, time_length, input_feature_size]
 
         fc_output = self.fc(x.view(-1, fs))
