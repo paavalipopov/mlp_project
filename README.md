@@ -1,10 +1,10 @@
 # Requirements
 
 ```bash
-conda create -n introdl python=3.9
-conda activate introdl
+conda create -n mlp_nn python=3.9
+conda activate mlp_nn
 - if mac user:
-    conda install pytorch torchvision torchaudio -c pytorch
+    conda install pytorch::pytorch torchvision torchaudio -c pytorch
 - else:
     conda install pytorch torchvision torchaudio pytorch-cuda=11.3 -c pytorch -c nvidia
 pip install -r requirements.txt
