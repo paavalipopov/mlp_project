@@ -1,24 +1,20 @@
 # pylint: disable=invalid-name, missing-function-docstring
-""" BNT model module """
-from random import uniform, randint
+""" BNT model module from https://github.com/Wayfear/BrainNetworkTransformer"""
 
+from typing import Tuple, Optional
+import bisect
+import math
 
-from typing import List
-from typing import Tuple
-from typing import Optional
+import numpy as np
 
-from torch.nn import TransformerEncoderLayer
-import torch.nn.functional as F
 from torch.nn.functional import softmax
-from torch.nn import Parameter
-from torch import nn
-from torch import Tensor
+from torch.nn import Parameter, TransformerEncoderLayer, functional as F
+from torch import nn, optim, Tensor
 import torch
+from omegaconf import OmegaConf, DictConfig, open_dict
 
-from omegaconf import OmegaConf, DictConfig
 
-
-def get_model(model_cfg: DictConfig):
+def get_model(cfg: DictConfig, model_cfg: DictConfig):
     return BrainNetworkTransformer(model_cfg)
 
 
@@ -26,40 +22,139 @@ def default_HPs(cfg: DictConfig):
     model_cfg = {
         "sizes": [360, 100],  # Note: The input node size should not be included here
         "pooling": [False, True],
-        "pos_encoding": "none",  # identity, none
+        "pos_encoding": "none",  # 'identity', 'none'
         "orthogonal": True,
         "freeze_center": True,
         "project_assignment": True,
         "pos_embed_dim": 360,
-        "lr": 1e-4,
         "node_sz": cfg.dataset.data_info.main.data_shape[1],
         "node_feature_sz": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
+        "optimizer": {"lr": 1e-4, "weight_decay": 1e-4},
+        "scheduler": {
+            "mode": "cos",  # ['step', 'poly', 'cos']
+            "base_lr": 1e-4,
+            "target_lr": 1e-5,
+            "decay_factor": 0.1,  # for step mode
+            "milestones": [0.3, 0.6, 0.9],
+            "poly_power": 2.0,  # for poly mode
+            "lr_decay": 0.98,
+            "warm_up_from": 0.0,
+            "warm_up_steps": 0,
+        },
     }
     return OmegaConf.create(model_cfg)
 
 
-# def random_HPs(cfg: DictConfig):
-#     model_cfg = {
-#         "dropout": uniform(0.1, 0.9),
-#         "hidden_size": randint(32, 256),
-#         "num_layers": randint(0, 4),
-#         "lr": 10 ** uniform(-5, -3),
-#         "input_size": cfg.dataset.data_info.main.data_shape[2],
-#         "output_size": cfg.dataset.data_info.main.n_classes,
-#     }
-#     return OmegaConf.create(model_cfg)
+def data_postproc(cfg: DictConfig, model_cfg: DictConfig, original_data):
+    # 4 is the number of heads in the BNT TransPoolingEncoder
+    if cfg.dataset.data_info.main.data_shape[2] % 4 != 0:
+        addendum_size = 4 - cfg.dataset.data_info.main.data_shape[2] % 4
+        print(f"Adding {addendum_size} column(s) of zeros to the FNC matrices")
+
+        with open_dict(model_cfg):
+            model_cfg.node_feature_sz = model_cfg.node_feature_sz + addendum_size
+
+        for key in original_data:
+            fnc = original_data[key]["FNC"]
+            addendum = np.zeros((fnc.shape[0], fnc.shape[1], addendum_size))
+            expanded_fnc = np.concatenate((fnc, addendum), axis=2)
+            original_data[key]["FNC"] = expanded_fnc
+
+            with open_dict(cfg):
+                cfg.dataset.data_info[key].data_shape = expanded_fnc.shape
+
+        print("New cfg.dataset.data_info:")
+        print(OmegaConf.to_yaml(cfg.dataset.data_info))
+        print("New model config:")
+        print(OmegaConf.to_yaml(model_cfg))
+
+    return original_data
 
 
-# class BaseModel(nn.Module):
-#     def __init__(self) -> None:
-#         super().__init__()
+def get_criterion(cfg: DictConfig, model_cfg: DictConfig):
+    return RedSumCEloss()
 
-#     @abstractmethod
-#     def forward(
-#         self, time_seires: torch.tensor, node_feature: torch.tensor
-#     ) -> torch.tensor:
-#         pass
+
+class RedSumCEloss:
+    """Basic Cross-entropy loss"""
+
+    def __init__(self):
+        self.ce_loss = nn.CrossEntropyLoss(reduction="sum")
+
+    def __call__(self, logits, target, model, device):
+        ce_loss = self.ce_loss(logits, target)
+
+        return ce_loss
+
+
+def get_optimizer(cfg: DictConfig, model_cfg: DictConfig, model):
+    optimizer = optim.Adam(
+        model.parameters(),
+        lr=model_cfg.optimizer.lr,
+        weight_decay=model_cfg.optimizer.weight_decay,
+    )
+
+    return optimizer
+
+
+def get_scheduler(cfg: DictConfig, model_cfg: DictConfig, optimizer):
+    return LRScheduler(cfg, model_cfg, optimizer)
+
+
+class LRScheduler:
+    def __init__(self, cfg: DictConfig, model_cfg: DictConfig, optimizer):
+        self.optimizer = optimizer
+
+        self.current_step = 0
+
+        self.scheduler_cfg = model_cfg.scheduler
+
+        self.lr_mode = model_cfg.scheduler.mode
+        self.base_lr = model_cfg.scheduler.base_lr
+        self.target_lr = model_cfg.scheduler.target_lr
+
+        self.warm_up_from = model_cfg.scheduler.warm_up_from
+        self.warm_up_steps = model_cfg.scheduler.warm_up_steps
+        self.total_steps = cfg.mode.max_epochs
+
+        self.lr = None
+
+        assert self.lr_mode in ["step", "poly", "cos", "linear", "decay"]
+
+    def step(self, metric):
+        assert 0 <= self.current_step <= self.total_steps
+        if self.current_step < self.warm_up_steps:
+            current_ratio = self.current_step / self.warm_up_steps
+            self.lr = (
+                self.warm_up_from + (self.base_lr - self.warm_up_from) * current_ratio
+            )
+        else:
+            current_ratio = (self.current_step - self.warm_up_steps) / (
+                self.total_steps - self.warm_up_steps
+            )
+            if self.lr_mode == "step":
+                count = bisect.bisect_left(self.scheduler_cfg.milestones, current_ratio)
+                self.lr = self.base_lr * pow(self.scheduler_cfg.decay_factor, count)
+            elif self.lr_mode == "poly":
+                poly = pow(1 - current_ratio, self.scheduler_cfg.poly_power)
+                self.lr = self.target_lr + (self.base_lr - self.target_lr) * poly
+            elif self.lr_mode == "cos":
+                cosine = math.cos(math.pi * current_ratio)
+                self.lr = (
+                    self.target_lr + (self.base_lr - self.target_lr) * (1 + cosine) / 2
+                )
+            elif self.lr_mode == "linear":
+                self.lr = self.target_lr + (self.base_lr - self.target_lr) * (
+                    1 - current_ratio
+                )
+            elif self.lr_mode == "decay":
+                epoch = self.current_step // self.training_config.steps_per_epoch
+                self.lr = self.base_lr * self.scheduler_cfg.lr_decay**epoch
+
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = self.lr
+        self.current_step += 1
 
 
 class BrainNetworkTransformer(nn.Module):
@@ -67,7 +162,7 @@ class BrainNetworkTransformer(nn.Module):
         super().__init__()
 
         self.attention_list = nn.ModuleList()
-        forward_dim = model_cfg.node_sz
+        forward_dim = model_cfg.node_feature_sz
 
         self.pos_encoding = model_cfg.pos_encoding
         if self.pos_encoding == "identity":
@@ -107,7 +202,7 @@ class BrainNetworkTransformer(nn.Module):
             nn.Linear(32, model_cfg.output_size),
         )
 
-    def forward(self, time_seires: torch.tensor, node_feature: torch.tensor):
+    def forward(self, node_feature: torch.tensor):
         (
             bz,
             _,
@@ -120,7 +215,7 @@ class BrainNetworkTransformer(nn.Module):
 
         assignments = []
 
-        for atten in self.attention_list:
+        for i, atten in enumerate(self.attention_list):
             node_feature, assignment = atten(node_feature)
             assignments.append(assignment)
 
@@ -437,7 +532,11 @@ class InterpretableTransformerEncoder(TransformerEncoderLayer):
         self.attention_weights: Optional[Tensor] = None
 
     def _sa_block(
-        self, x: Tensor, attn_mask: Optional[Tensor], key_padding_mask: Optional[Tensor]
+        self,
+        x: Tensor,
+        attn_mask: Optional[Tensor],
+        key_padding_mask: Optional[Tensor],
+        is_causal: bool = False,
     ) -> Tensor:
         x, weights = self.self_attn(
             x,
