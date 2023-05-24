@@ -38,7 +38,7 @@ class CEloss:
     """Basic Cross-entropy loss"""
 
     def __init__(self):
-        self.ce_loss = nn.CrossEntropyLoss()
+        self.ce_loss = nn.CrossEntropyLoss(reduction="sum")
 
     def __call__(self, logits, target, model, device):
         ce_loss = self.ce_loss(logits, target)

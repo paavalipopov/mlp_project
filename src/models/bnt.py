@@ -72,22 +72,6 @@ def data_postproc(cfg: DictConfig, model_cfg: DictConfig, original_data):
     return original_data
 
 
-def get_criterion(cfg: DictConfig, model_cfg: DictConfig):
-    return RedSumCEloss()
-
-
-class RedSumCEloss:
-    """Basic Cross-entropy loss"""
-
-    def __init__(self):
-        self.ce_loss = nn.CrossEntropyLoss(reduction="sum")
-
-    def __call__(self, logits, target, model, device):
-        ce_loss = self.ce_loss(logits, target)
-
-        return ce_loss
-
-
 def get_optimizer(cfg: DictConfig, model_cfg: DictConfig, model):
     optimizer = optim.Adam(
         model.parameters(),
