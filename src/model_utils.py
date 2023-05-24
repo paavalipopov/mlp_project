@@ -4,8 +4,10 @@
 from importlib import import_module
 from torch import nn, optim
 
+from omegaconf import DictConfig
 
-def criterion_factory(cfg, model_cfg):
+
+def criterion_factory(cfg: DictConfig, model_cfg: DictConfig):
     """Criterion factory"""
     if "custom_criterion" not in cfg.model or not cfg.model.custom_criterion:
         criterion = CEloss()
@@ -27,7 +29,7 @@ def criterion_factory(cfg, model_cfg):
                                 'get_criterion'. Is the function misnamed/not defined?"
             ) from e
 
-        criterion = get_criterion(model_cfg)
+        criterion = get_criterion(cfg, model_cfg)
 
     return criterion
 
@@ -44,7 +46,7 @@ class CEloss:
         return ce_loss
 
 
-def optimizer_factory(cfg, model, model_cfg):
+def optimizer_factory(cfg: DictConfig, model_cfg: DictConfig, model):
     """Optimizer factory"""
     if "custom_optimizer" not in cfg.model or not cfg.model.custom_optimizer:
         optimizer = optim.Adam(
@@ -69,12 +71,12 @@ def optimizer_factory(cfg, model, model_cfg):
                                 'get_optimizer'. Is the function misnamed/not defined?"
             ) from e
 
-        optimizer = get_optimizer(model, model_cfg)
+        optimizer = get_optimizer(cfg, model_cfg, model)
 
     return optimizer
 
 
-def scheduler_factory(cfg, optimizer, model_cfg):
+def scheduler_factory(cfg: DictConfig, model_cfg: DictConfig, optimizer):
     """Scheduler factory"""
     if "custom_scheduler" not in cfg.model or not cfg.model.custom_scheduler:
         scheduler = DummyScheduler()
@@ -96,7 +98,7 @@ def scheduler_factory(cfg, optimizer, model_cfg):
                                 'get_scheduler'. Is the function misnamed/not defined?"
             ) from e
 
-        scheduler = get_scheduler(optimizer, model_cfg)
+        scheduler = get_scheduler(cfg, model_cfg, optimizer)
 
     return scheduler
 

@@ -4,12 +4,12 @@
 from importlib import import_module
 import os
 
-from omegaconf import OmegaConf, open_dict
+from omegaconf import OmegaConf, DictConfig, open_dict
 
 from src.settings import LOGS_ROOT
 
 
-def model_config_factory(cfg, k=None):
+def model_config_factory(cfg: DictConfig, k=None):
     """Model config factory"""
     if cfg.mode.name == "tune":
         model_config = get_tune_config(cfg)
@@ -21,7 +21,7 @@ def model_config_factory(cfg, k=None):
     return model_config
 
 
-def get_tune_config(cfg):
+def get_tune_config(cfg: DictConfig):
     """Returns random HPs defined by the models random_HPs() function"""
     if "tunable" in cfg.model:
         assert cfg.model.tunable, "Model is specified as not tunable, aborting"
@@ -52,7 +52,7 @@ def get_tune_config(cfg):
     return model_cfg
 
 
-def get_best_config(cfg, k=None):
+def get_best_config(cfg: DictConfig, k=None):
     """
     1. If cfg.single_HP is True, return the HPs stored in cfg.model_cfg_path. You should avoid using it.
     2. If cfg.model.default_HP is True, return the HPs defined by 'default_HPs(cfg)' function in the model's .py module
@@ -139,7 +139,7 @@ def get_best_config(cfg, k=None):
     return model_cfg
 
 
-def model_factory(cfg, model_cfg):
+def model_factory(cfg: DictConfig, model_cfg: DictConfig):
     """Models factory"""
     try:
         model_module = import_module(f"src.models.{cfg.model.name}")
@@ -158,6 +158,6 @@ def model_factory(cfg, model_cfg):
                              'get_model'. Is the function misnamed/not defined?"
         ) from e
 
-    model = get_model(model_cfg)
+    model = get_model(cfg, model_cfg)
 
     return model

@@ -9,7 +9,11 @@ from torch import optim
 from omegaconf import OmegaConf, DictConfig
 
 
-def get_criterion(model_cfg: DictConfig):
+def get_model(cfg: DictConfig, model_cfg: DictConfig):
+    return DICE(model_cfg)
+
+
+def get_criterion(cfg: DictConfig, model_cfg: DictConfig):
     return DICEregCEloss(model_cfg)
 
 
@@ -38,7 +42,7 @@ class DICEregCEloss:
         return loss
 
 
-def get_scheduler(optimizer, model_cfg: DictConfig):
+def get_scheduler(cfg: DictConfig, model_cfg: DictConfig, optimizer):
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         patience=model_cfg.scheduler.patience,
@@ -46,10 +50,6 @@ def get_scheduler(optimizer, model_cfg: DictConfig):
         cooldown=0,
     )
     return scheduler
-
-
-def get_model(model_cfg: DictConfig):
-    return DICE(model_cfg)
 
 
 def default_HPs(cfg: DictConfig):

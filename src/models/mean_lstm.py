@@ -8,7 +8,7 @@ from torch import nn
 from omegaconf import OmegaConf, DictConfig
 
 
-def get_model(model_cfg: DictConfig):
+def get_model(cfg: DictConfig, model_cfg: DictConfig):
     return MeanLSTM(model_cfg)
 
 

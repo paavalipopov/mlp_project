@@ -162,8 +162,8 @@ def run_trial(cfg, model_cfg, dataloaders):
     """Given config and prepared dataloaders, build and train the model and return test results"""
     model = model_factory(cfg, model_cfg)
     criterion = criterion_factory(cfg, model_cfg)
-    optimizer = optimizer_factory(cfg, model, model_cfg)
-    scheduler = scheduler_factory(cfg, optimizer, model_cfg)
+    optimizer = optimizer_factory(cfg, model_cfg, model)
+    scheduler = scheduler_factory(cfg, model_cfg, optimizer)
     logger = logger_factory(cfg, model_cfg)
 
     trainer = trainer_factory(

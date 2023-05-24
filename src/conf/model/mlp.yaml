@@ -1,5 +1,5 @@
 name: mlp # must create '{name}.py' module in src/models with:
-# 1. 'get_model(model_cfg)' defined. 'model_cfg' normally stores HPs and input shape info
+# 1. 'get_model(cfg, model_cfg)' defined. 'model_cfg' normally stores HPs and input shape info
 # 2. 'random_HPs(cfg)' and/or 'default_HPs(cfg)' defined. 'cfg' normally stores dataset shape info
 # see 'src.model.model_factory' and 'src.models.mlp' module for reference
 
@@ -36,17 +36,17 @@ custom_dataloader: False # optional (default: False), True, False;
 
 custom_criterion: False # optional (default: False), True, False; 
 # if you want custom criterion, set to True. 
-# 'True' requires 'get_criterion(model_cfg)' defined in the model's module
+# 'True' requires 'get_criterion(cfg, model_cfg)' defined in the model's module
 # see 'src.model_utils.criterion_factory' and 'src.model_utils.CEloss' for reference
 
 custom_optimizer: False # optional (default: False), True, False; 
 # if you want custom optimizer, set to True. 
-# 'True' requires 'get_optimizer(model, model_cfg)' defined in the model's module
+# 'True' requires 'get_optimizer(cfg, model_cfg, model)' defined in the model's module
 # see 'src.model_utils.optimizer_factory' for reference
 
 custom_scheduler: False # optional (default: False), True, False; 
 # if you want custom scheduler, set to True. 
-# 'True' requires 'get_scheduler(optimizer, model_cfg)' defined in the model's module
+# 'True' requires 'get_scheduler(cfg, model_cfg, optimizer)' defined in the model's module
 # see 'src.model_utils.scheduler_factory' and 'src.model_utils.DummyScheduler' for reference
 
 
