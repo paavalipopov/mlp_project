@@ -34,32 +34,6 @@ def default_HPs(cfg: DictConfig):
     return OmegaConf.create(model_cfg)
 
 
-# def data_postproc(cfg: DictConfig, model_cfg: DictConfig, original_data):
-#     # 4 is the number of heads in the BNT TransPoolingEncoder
-#     if cfg.dataset.data_info.main.data_shape[2] % 4 != 0:
-#         addendum_size = 4 - cfg.dataset.data_info.main.data_shape[2] % 4
-#         print(f"Adding {addendum_size} column(s) of zeros to the FNC matrices")
-
-#         with open_dict(model_cfg):
-#             model_cfg.node_feature_sz = model_cfg.node_feature_sz + addendum_size
-
-#         for key in original_data:
-#             fnc = original_data[key]["FNC"]
-#             addendum = np.zeros((fnc.shape[0], fnc.shape[1], addendum_size))
-#             expanded_fnc = np.concatenate((fnc, addendum), axis=2)
-#             original_data[key]["FNC"] = expanded_fnc
-
-#             with open_dict(cfg):
-#                 cfg.dataset.data_info[key].data_shape = expanded_fnc.shape
-
-#         print("New cfg.dataset.data_info:")
-#         print(OmegaConf.to_yaml(cfg.dataset.data_info))
-#         print("New model config:")
-#         print(OmegaConf.to_yaml(model_cfg))
-
-#     return original_data
-
-
 def get_optimizer(cfg: DictConfig, model_cfg: DictConfig, model):
     optimizer = optim.Adam(
         model.parameters(),
