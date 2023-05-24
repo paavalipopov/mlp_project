@@ -100,7 +100,7 @@ class BasicTrainer:
         )
 
         # set device
-        if getattr(torch, "has_mps", False):
+        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
             # Apple Silicon
             dev = "mps"
         elif torch.cuda.is_available():
