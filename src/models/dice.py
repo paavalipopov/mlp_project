@@ -110,7 +110,7 @@ def random_HPs(cfg: DictConfig):
 
 class DICE(nn.Module):
     """
-    LSTM model for fMRI data.
+    DICE model for fMRI data.
     Expected input shape: [batch_size, time_length, input_feature_size].
     Output: [batch_size, n_classes]
     """
