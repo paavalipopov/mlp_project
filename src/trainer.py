@@ -100,12 +100,13 @@ class BasicTrainer:
         )
 
         # set device
-        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            # Apple Silicon
-            dev = "mps"
-        elif torch.cuda.is_available():
+        if torch.cuda.is_available():
             # CUDA
             dev = "cuda:0"
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            # Apple Silicon's mps is too buggy, using cpu instead
+            # dev = "mps"
+            dev = "cpu"
         else:
             # CPU
             dev = "cpu"
