@@ -135,7 +135,7 @@ def get_best_config(cfg, k=None):
             model_cfg = OmegaConf.load(f)
 
     print("Loaded model config:")
-    print(model_cfg)
+    print(f"{OmegaConf.to_yaml(model_cfg)}")
     return model_cfg
 
 
