@@ -1,4 +1,4 @@
-# pylint: disable=invalid-name
+# pylint: disable=invalid-name, too-many-branches
 """Models for experiments and functions for setting them up"""
 
 from importlib import import_module
