@@ -1,4 +1,4 @@
-# pylint: disable=invalid-name, missing-function-docstring, missing-class-docstring, unused-argument, too-few-public-methods, no-member, too-many-arguments, line-too-long
+# pylint: disable=invalid-name, missing-function-docstring, missing-class-docstring, unused-argument, too-few-public-methods, no-member, too-many-arguments, line-too-long, too-many-instance-attributes
 """ BNT model module from https://github.com/Wayfear/BrainNetworkTransformer"""
 
 from typing import Tuple, Optional
