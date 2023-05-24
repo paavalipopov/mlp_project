@@ -44,39 +44,6 @@ class CEloss:
         return ce_loss
 
 
-# # TODO: move it to DICE model CRITERION implementation
-# class DICEregCEloss:
-#     """Cross-entropy loss with model regularization"""
-
-#     def __init__(self, model_cfg):
-#         self.ce_loss = nn.CrossEntropyLoss()
-
-#         self.reg_param = model_cfg["reg_param"]
-
-#     def __call__(self, logits, target, model, device):
-#         ce_loss = self.ce_loss(logits, target)
-
-#         reg_loss = torch.zeros(1).to(device)
-
-#         for name, param in model.gta_embed.named_parameters():
-#             if "bias" not in name:
-#                 reg_loss += self.reg_param * torch.norm(param, p=1)
-
-#         for name, param in model.gta_attend.named_parameters():
-#             if "bias" not in name:
-#                 reg_loss += self.reg_param * torch.norm(param, p=1)
-
-#         loss = ce_loss + reg_loss
-#         return loss
-# # TODO: move it to DICE model SCHEDULER implementation
-#         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-#             optimizer,
-#             patience=model_config["scheduler"]["patience"],
-#             factor=model_config["scheduler"]["factor"],
-#             cooldown=0,
-#         )
-
-
 def optimizer_factory(cfg, model, model_cfg):
     """Optimizer factory"""
     if "custom_optimizer" not in cfg.model or not cfg.model.custom_optimizer:
