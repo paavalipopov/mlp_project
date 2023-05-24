@@ -1,4 +1,4 @@
-# pylint: disable=invalid-name, missing-function-docstring
+# pylint: disable=invalid-name, missing-function-docstring, missing-class-docstring, unused-argument, too-few-public-methods, no-member, too-many-arguments, line-too-long
 """ BNT model module from https://github.com/Wayfear/BrainNetworkTransformer"""
 
 from typing import Tuple, Optional
@@ -120,7 +120,7 @@ class LRScheduler:
 
         self.lr = None
 
-        assert self.lr_mode in ["step", "poly", "cos", "linear", "decay"]
+        assert self.lr_mode in ["step", "poly", "cos"]
 
     def step(self, metric):
         assert 0 <= self.current_step <= self.total_steps
@@ -144,13 +144,6 @@ class LRScheduler:
                 self.lr = (
                     self.target_lr + (self.base_lr - self.target_lr) * (1 + cosine) / 2
                 )
-            elif self.lr_mode == "linear":
-                self.lr = self.target_lr + (self.base_lr - self.target_lr) * (
-                    1 - current_ratio
-                )
-            elif self.lr_mode == "decay":
-                epoch = self.current_step // self.training_config.steps_per_epoch
-                self.lr = self.base_lr * self.scheduler_cfg.lr_decay**epoch
 
         for param_group in self.optimizer.param_groups:
             param_group["lr"] = self.lr
@@ -215,7 +208,7 @@ class BrainNetworkTransformer(nn.Module):
 
         assignments = []
 
-        for i, atten in enumerate(self.attention_list):
+        for _, atten in enumerate(self.attention_list):
             node_feature, assignment = atten(node_feature)
             assignments.append(assignment)
 
