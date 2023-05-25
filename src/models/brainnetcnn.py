@@ -1,13 +1,12 @@
 # pylint: disable=invalid-name, missing-function-docstring, missing-class-docstring, unused-argument, too-few-public-methods, no-member, too-many-arguments, line-too-long, too-many-instance-attributes
 """ BrainNetCNN model module from https://github.com/Wayfear/BrainNetworkTransformer"""
 
-import bisect
-import math
-
 from torch.nn import functional as F
 from torch import nn, optim
 import torch
 from omegaconf import OmegaConf, DictConfig
+
+from src.models.src.bnt_modules import LRScheduler
 
 
 def get_model(cfg: DictConfig, model_cfg: DictConfig):
@@ -48,69 +47,6 @@ def get_scheduler(cfg: DictConfig, model_cfg: DictConfig, optimizer):
     return LRScheduler(cfg, model_cfg, optimizer)
 
 
-class LRScheduler:
-    def __init__(self, cfg: DictConfig, model_cfg: DictConfig, optimizer):
-        self.optimizer = optimizer
-
-        self.current_step = 0
-
-        self.scheduler_cfg = model_cfg.scheduler
-
-        self.lr_mode = model_cfg.scheduler.mode
-        self.base_lr = model_cfg.scheduler.base_lr
-        self.target_lr = model_cfg.scheduler.target_lr
-
-        self.warm_up_from = model_cfg.scheduler.warm_up_from
-        self.warm_up_steps = model_cfg.scheduler.warm_up_steps
-        self.total_steps = cfg.mode.max_epochs
-
-        self.lr = None
-
-        assert self.lr_mode in ["step", "poly", "cos"]
-
-    def step(self, metric):
-        assert 0 <= self.current_step <= self.total_steps
-        if self.current_step < self.warm_up_steps:
-            current_ratio = self.current_step / self.warm_up_steps
-            self.lr = (
-                self.warm_up_from + (self.base_lr - self.warm_up_from) * current_ratio
-            )
-        else:
-            current_ratio = (self.current_step - self.warm_up_steps) / (
-                self.total_steps - self.warm_up_steps
-            )
-            if self.lr_mode == "step":
-                count = bisect.bisect_left(self.scheduler_cfg.milestones, current_ratio)
-                self.lr = self.base_lr * pow(self.scheduler_cfg.decay_factor, count)
-            elif self.lr_mode == "poly":
-                poly = pow(1 - current_ratio, self.scheduler_cfg.poly_power)
-                self.lr = self.target_lr + (self.base_lr - self.target_lr) * poly
-            elif self.lr_mode == "cos":
-                cosine = math.cos(math.pi * current_ratio)
-                self.lr = (
-                    self.target_lr + (self.base_lr - self.target_lr) * (1 + cosine) / 2
-                )
-
-        for param_group in self.optimizer.param_groups:
-            param_group["lr"] = self.lr
-        self.current_step += 1
-
-
-class E2EBlock(torch.nn.Module):
-    """E2Eblock."""
-
-    def __init__(self, in_planes, planes, roi_num, bias=True):
-        super().__init__()
-        self.d = roi_num
-        self.cnn1 = torch.nn.Conv2d(in_planes, planes, (1, self.d), bias=bias)
-        self.cnn2 = torch.nn.Conv2d(in_planes, planes, (self.d, 1), bias=bias)
-
-    def forward(self, x):
-        a = self.cnn1(x)
-        b = self.cnn2(x)
-        return torch.cat([a] * self.d, 3) + torch.cat([b] * self.d, 2)
-
-
 class BrainNetCNN(nn.Module):
     def __init__(self, model_cfg: DictConfig):
         super().__init__()
@@ -137,3 +73,18 @@ class BrainNetCNN(nn.Module):
         out = F.leaky_relu(self.dense3(out), negative_slope=0.33)
 
         return out
+
+
+class E2EBlock(torch.nn.Module):
+    """E2Eblock."""
+
+    def __init__(self, in_planes, planes, roi_num, bias=True):
+        super().__init__()
+        self.d = roi_num
+        self.cnn1 = torch.nn.Conv2d(in_planes, planes, (1, self.d), bias=bias)
+        self.cnn2 = torch.nn.Conv2d(in_planes, planes, (self.d, 1), bias=bias)
+
+    def forward(self, x):
+        a = self.cnn1(x)
+        b = self.cnn2(x)
+        return torch.cat([a] * self.d, 3) + torch.cat([b] * self.d, 2)
