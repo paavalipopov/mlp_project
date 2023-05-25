@@ -6,7 +6,7 @@ import time
 import warnings
 
 import torch
-from torch import nn
+from torch import nn, randperm as rp
 import numpy as np
 
 from tqdm import tqdm
@@ -87,6 +87,8 @@ class BasicTrainer:
         self.scheduler = scheduler
         self.logger = logger
 
+        self.permute = cfg.permute if "permute" in cfg else False
+
         params = self.count_params(self.model)
         self.logger.summary["params"] = params
 
@@ -151,6 +153,11 @@ class BasicTrainer:
 
         with torch.set_grad_enabled(is_train_dataset):
             for data, target in self.dataloaders[ds_name]:
+                # permute TS data is needed
+                if is_train_dataset and self.permute:
+                    for i, sample in enumerate(data):
+                        data[i] = sample[rp(sample.shape[0]), :]
+
                 data, target = data.to(self.device), target.to(self.device)
                 total_size += data.shape[0]
 

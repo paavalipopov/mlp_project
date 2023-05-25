@@ -27,6 +27,11 @@ def start(cfg):
             cfg.model_cfg_path is not None
         ), "You must spcify 'model_cfg_path' if single_HPs is set to True"
         assert isinstance(cfg.model_cfg_path, str)
+    if "permute" in cfg and cfg.permute:
+        if "data_type" in cfg.model:
+            assert (
+                cfg.model.data_type == "TS"
+            ), "Time permutation is not allowed for non-TS models"
 
     # set wandb environment
     os.environ["WANDB_SILENT"] = "true" if cfg.wandb_silent else "false"

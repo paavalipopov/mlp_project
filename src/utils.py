@@ -41,6 +41,8 @@ def set_project_name(cfg):
 
     if "single_HPs" in cfg and cfg.single_HPs:
         project_name += "-single_HPs"
+    if "permute" in cfg and cfg.permute:
+        project_name += "-permute"
 
     project_dir = str(LOGS_ROOT.joinpath(project_name))
 
