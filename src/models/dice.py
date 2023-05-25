@@ -1,4 +1,4 @@
-# pylint: disable=invalid-name, no-member, missing-function-docstring, too-many-branches, too-few-public-methods
+# pylint: disable=invalid-name, no-member, missing-function-docstring, too-many-branches, too-few-public-methods, unused-argument
 """ DICE model from https://github.com/UsmanMahmood27/DICE """
 from random import uniform, randint
 
