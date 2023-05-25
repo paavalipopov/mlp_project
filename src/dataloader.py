@@ -29,7 +29,7 @@ def dataloader_factory(cfg, data, k, trial=None):
                                 'get_dataloader'. Is the function misnamed/not defined?"
             ) from e
 
-        dataloader = get_dataloader(cfg, data, k, trial=None)
+        dataloader = get_dataloader(cfg, data, k, trial)
 
     return dataloader
 
