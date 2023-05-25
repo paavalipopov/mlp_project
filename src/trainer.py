@@ -206,8 +206,8 @@ class BasicTrainer:
         if self.early_stopping.early_stop:
             print("EarlyStopping triggered")
 
-        elapsed_time = time.time() - start_time
-        self.logger.summary["training_time"] = elapsed_time
+        self.training_time = time.time() - start_time
+        self.logger.summary["training_time"] = self.training_time
 
     def test(self):
         """Start testing"""
@@ -233,6 +233,7 @@ class BasicTrainer:
 
         print("Testing trained model")
         self.test_results = {}
+        self.test_results["training_time"] = self.training_time
         self.test()
         print(f"Test results: {self.test_results}")
         print("Done!")
