@@ -4,7 +4,7 @@ name: dice
 # allow_test_ds: True # optional (default: False), True, False
 
 # tunable: True # optional (default: True), True, False;
-default_HP: False # can be set to True, default_HPs() are defined
+default_HP: True # can be set to True, default_HPs() are defined
 
 
 # require_data_postproc: False # optional (default: False), True, False; 
