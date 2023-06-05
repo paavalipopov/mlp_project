@@ -4,6 +4,7 @@ from importlib import import_module
 import os
 import time
 import warnings
+from pprint import pprint
 
 import torch
 from torch import nn, randperm as rp
@@ -242,7 +243,8 @@ class BasicTrainer:
         self.test_results = {}
         self.test_results["training_time"] = self.training_time
         self.test()
-        print(f"Test results: {self.test_results}")
+        print("Test results:")
+        pprint(self.test_results, indent=2)
         print("Done!")
 
         if not self.cfg.mode.preserve_checkpoints:
