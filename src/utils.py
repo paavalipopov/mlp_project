@@ -1,6 +1,8 @@
 # pylint: disable=invalid-name
 """Auxilary functions"""
 
+import os
+
 from omegaconf import open_dict
 
 from src.settings import UTCNOW, LOGS_ROOT
@@ -25,7 +27,8 @@ def set_project_name(cfg):
 
     model_name = cfg.model.name
     if "default_HP" in cfg.model and cfg.model.default_HP:
-        model_name += "_defHP"
+        if cfg.mode.name != "tune":
+            model_name += "_defHP"
 
     dataset_name = cfg.dataset.name
     if "multiclass" in cfg.dataset and cfg.dataset.multiclass:
@@ -82,3 +85,43 @@ def set_run_name(cfg, outer_k=None, trial=None, inner_k=None):
             cfg.wandb_trial_name = wandb_trial_name
             cfg.k_dir = k_dir
             cfg.run_dir = run_dir
+
+
+def verify_config(cfg):
+    """
+    Verify the correctness of the provided config.
+    Note: This list of checks is not exhaustive, additional checks happen further in the code.
+    Note: Some of the checks are repeated further in the code.
+    """
+    # if model is to use single set of HPs in EXP mode, you must provide path to .yaml or .json file
+    if "single_HPs" in cfg and cfg.single_HPs and cfg.mode.name == "exp":
+        assert (
+            cfg.model_cfg_path is not None
+        ), "You must spcify 'model_cfg_path' if single_HPs is set to True"
+        assert isinstance(cfg.model_cfg_path, str)
+        assert os.path.isfile(
+            cfg.model_cfg_path
+        ), "Provided path to model config ({cfg.model_cfg_path}) is incorrect"
+
+    # shuffling the time points in the training samples is only allowed for TS input
+    if "permute" in cfg and cfg.permute:
+        if "data_type" in cfg.model:
+            assert (
+                cfg.model.data_type == "TS"
+            ), "Time permutation is not allowed for non-TS models"
+
+    # if model is specified as not tunable, abort tuning
+    # Note: tunable models must have random_HPs(cfg) function defined in their module
+    if cfg.mode.name == "tune":
+        if "tunable" in cfg.model:
+            assert cfg.model.tunable, "Model is specified as not tunable, aborting"
+
+    # if you are using tuning_holdout for your dataset, make sure to provide tuning_split value.
+    # in TUNE mode, 1/tuning_split of the dataset will be used for tuning,
+    # and the rest will be used in EXP mode
+    if "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout:
+        assert (
+            cfg.exp.tuning_split is not None
+        ), "you must specify 'exp.tuning_split' if \
+                 'exp.tuning_holdout' is set to True"
+        assert isinstance(cfg.exp.tuning_split, int)

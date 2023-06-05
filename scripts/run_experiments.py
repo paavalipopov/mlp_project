@@ -2,13 +2,13 @@
 """Script for running experiments: tuning and testing hypertuned models"""
 import os
 
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 import hydra
 
 import pandas as pd
 import numpy as np
 
-from src.utils import set_project_name, set_run_name
+from src.utils import set_project_name, set_run_name, verify_config
 from src.data import data_factory, data_postfactory
 from src.dataloader import dataloader_factory, cross_validation_split
 from src.model import model_config_factory, model_factory
@@ -18,20 +18,11 @@ from src.trainer import trainer_factory
 
 
 @hydra.main(version_base=None, config_path="../src/conf", config_name="exp_config")
-def start(cfg):
+def start(cfg: DictConfig):
     """Main script for starting experiments"""
 
-    # a few conditions checks
-    if "single_HPs" in cfg and cfg.single_HPs:
-        assert (
-            cfg.model_cfg_path is not None
-        ), "You must spcify 'model_cfg_path' if single_HPs is set to True"
-        assert isinstance(cfg.model_cfg_path, str)
-    if "permute" in cfg and cfg.permute:
-        if "data_type" in cfg.model:
-            assert (
-                cfg.model.data_type == "TS"
-            ), "Time permutation is not allowed for non-TS models"
+    # check if config is correct
+    verify_config(cfg)
 
     # set wandb environment
     os.environ["WANDB_SILENT"] = "true" if cfg.wandb_silent else "false"

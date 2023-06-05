@@ -1,4 +1,4 @@
-# pylint: disable=invalid-name, too-many-branches
+# pylint: disable=invalid-name, too-many-branches, line-too-long
 """Models for experiments and functions for setting them up"""
 
 from importlib import import_module
@@ -101,7 +101,8 @@ def get_best_config(cfg: DictConfig, k=None):
 
     else:
         # 3. load the optimal HPs from logs
-        if "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout:
+        # if the model was tuned for each test fold independently, k must be provided
+        if "tuning_holdout" not in cfg.dataset or not cfg.dataset.tuning_holdout:
             assert k is not None
 
         searched_dir = cfg.project_name.split("-")

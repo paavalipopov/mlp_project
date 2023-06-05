@@ -92,7 +92,7 @@ def data_factory(cfg: DictConfig):
 
     data = {}
     data_info = {}
-    data["main"], data_info["main"] = processor((ts_data, labels), cfg)
+    data["main"], data_info["main"] = processor(cfg, (ts_data, labels))
 
     # TODO: add additional test datasets
 
@@ -102,7 +102,7 @@ def data_factory(cfg: DictConfig):
     return data
 
 
-def common_processor(data, cfg: DictConfig):
+def common_processor(cfg: DictConfig, data):
     """
     Return processed data and data_info based on config
 
@@ -148,11 +148,11 @@ def common_processor(data, cfg: DictConfig):
     if cfg.dataset.zscore:
         ts_data = stats.zscore(ts_data, axis=1)
 
-    # derive FNC data, if needed
+    # use TS data as is
     if "data_type" not in cfg.model or cfg.model.data_type == "TS":
         data = {"TS": ts_data, "labels": labels}
         data_shape = ts_data.shape
-
+    # derive FNC data
     elif cfg.model.data_type in ["FNC", "tri-FNC", "TS-FNC"]:
         pearson = np.zeros((ts_data.shape[0], ts_data.shape[2], ts_data.shape[2]))
         for i in range(ts_data.shape[0]):
