@@ -12,8 +12,8 @@ pip install -r requirements.txt
 
 # Examples:
 ```
-PYTHONPATH=. python scripts/run_experiments.py mode=tune dataset=fbirn model=mlp
-PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset=fbirn model=mlp
+PYTHONPATH=. python scripts/run_experiments.py mode=tune dataset=fbirn model=mlp prefix=test wandb_offline=True
+PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset=fbirn model=mlp prefix=test wandb_offline=True
 ```
 # TODO
 Update what's below
