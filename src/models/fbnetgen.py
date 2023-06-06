@@ -1,6 +1,8 @@
 # pylint: disable=invalid-name, missing-function-docstring, missing-class-docstring, unused-argument, too-few-public-methods, no-member, too-many-arguments, line-too-long, too-many-instance-attributes, too-many-locals
 """ FBNetGen model module from https://github.com/Wayfear/BrainNetworkTransformer"""
 
+from copy import deepcopy
+
 import numpy as np
 
 from torch.nn import functional as F
@@ -59,14 +61,15 @@ def default_HPs(cfg: DictConfig):
 def data_postproc(cfg: DictConfig, model_cfg: DictConfig, original_data):
     # FBNetGen requires TS data to have shape [samples, feature_size, time_length]
     # 4 is GRU window_size, time_length must be divisible by it
-    for key in original_data:
-        ts_data = original_data[key]["TS"]
+    data = deepcopy(original_data)
+    for key in data:
+        ts_data = data[key]["TS"]
         tail = ts_data.shape[1] % 4
         if tail != 0:
             print(f"Cropping '{key}' TS data time length by {tail}")
             ts_data = ts_data[:, :-tail, :]
         ts_data = np.swapaxes(ts_data, 1, 2)
-        original_data[key]["TS"] = ts_data
+        data[key]["TS"] = ts_data
 
         with open_dict(model_cfg):
             model_cfg.timeseries_sz = ts_data.shape[2]
@@ -79,7 +82,7 @@ def data_postproc(cfg: DictConfig, model_cfg: DictConfig, original_data):
         print("New model config:")
         print(OmegaConf.to_yaml(model_cfg))
 
-    return original_data
+    return data
 
 
 def get_criterion(cfg: DictConfig, model_cfg: DictConfig):
