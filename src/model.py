@@ -78,7 +78,7 @@ def get_best_config(cfg: DictConfig, k=None):
         with open_dict(model_cfg):
             model_cfg.data_info = cfg.dataset.data_info
 
-    elif cfg.model.default_HP:
+    elif "default_HP" in cfg.model and cfg.model.default_HP:
         # 2. try to get the HPs defined by 'default_HPs(cfg)' function in the model's .py module
         try:
             model_module = import_module(f"src.models.{cfg.model.name}")
