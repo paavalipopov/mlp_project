@@ -52,6 +52,7 @@ def start(cfg: DictConfig):
         else:
             # tune each original_data CV fold independently
             for k in range(0, cfg.mode.n_splits):
+                print(f"Outer k: {k:02d}")
                 tune_fold_data = original_data
                 tune_fold_data["main"], _ = cross_validation_split(
                     tune_fold_data["main"], cfg.mode.n_splits, k
@@ -67,6 +68,7 @@ def tune(cfg, original_data, outer_k=None):
 
     # for each trial get new set of HPs, test them using CV
     for trial in range(0, cfg.mode.n_trials):
+        print(f"Trial: {trial:04d}")
         # get random model config
         model_cfg = model_config_factory(cfg)
         # reshape data according to model config (if needed)
@@ -77,6 +79,7 @@ def tune(cfg, original_data, outer_k=None):
         )
         # run nested CV
         for inner_k in range(0, cfg.mode.n_splits):
+            print(f"Inner k: {inner_k:02d}")
             set_run_name(cfg, outer_k=outer_k, trial=trial, inner_k=inner_k)
             os.makedirs(cfg.run_dir, exist_ok=True)
             dataloaders = dataloader_factory(cfg, data, k=inner_k)
@@ -121,6 +124,7 @@ def experiment(cfg, original_data):
     """Given config and data, run cross-validated rounds with optimal HPs"""
 
     for outer_k in range(0, cfg.mode.n_splits):
+        print(f"k: {outer_k:02d}")
         # for each fold get optimal set of HPs,
         # unless single_HP is True,
         # or model HPs are hardcoded
@@ -134,6 +138,7 @@ def experiment(cfg, original_data):
         # for outer_k test fold, train model n_trials times,
         # using different train/valid split each time
         for trial in range(0, cfg.mode.n_trials):
+            print(f"Trial: {trial:04d}")
             set_run_name(cfg, outer_k=outer_k, trial=trial)
             os.makedirs(cfg.run_dir, exist_ok=True)
             dataloaders = dataloader_factory(cfg, data, k=outer_k, trial=trial)
