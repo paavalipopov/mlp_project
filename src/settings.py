@@ -13,6 +13,6 @@ UTCNOW = datetime.utcnow().strftime("%y%m%d.%H%M%S")
 
 node = platform.node()
 if "arctrd" in node:
-    DATA_ROOT = "/data/users2/ppopov1/datasets"
+    DATA_ROOT = path.Path("/data/users2/ppopov1/datasets")
 else:
     DATA_ROOT = ASSETS_ROOT.joinpath("data")
