@@ -1,4 +1,4 @@
-name: fbirn # must create '{name}.py' module in src/datasets with 'load_data(cfg)' defined. 
+name: time_fbirn # must create '{name}.py' module in src/datasets with 'load_data(cfg)' defined. 
 # Loaded data is expected to be features([n_samples, time_length, feature_size]), labels([n_samples]).
 # Otherwise you need to define custom processor
 # see 'src.data.data_factory' and 'src.datasets.fbirn.load_data' module for reference
@@ -10,7 +10,7 @@ tuning_split: null # type: int. required if tuning_holdout is True;
 # 1/tuning_split of the dataset will be used for tuning,
 # and the rest for experiments
 
-compatible_datasets: [cobre, bsnip] # datasets on the same category, 
+compatible_datasets: null # datasets on the same category, 
 # which can be used as additional test data
 
 custom_processor: False # optional (default: False), True, False;
