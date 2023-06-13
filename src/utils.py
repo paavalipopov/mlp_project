@@ -121,7 +121,7 @@ def verify_config(cfg):
     # and the rest will be used in EXP mode
     if "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout:
         assert (
-            cfg.exp.tuning_split is not None
+            cfg.dataset.tuning_split is not None
         ), "you must specify 'exp.tuning_split' if \
                  'exp.tuning_holdout' is set to True"
-        assert isinstance(cfg.exp.tuning_split, int)
+        assert isinstance(cfg.dataset.tuning_split, int)
