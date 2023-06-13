@@ -13,6 +13,8 @@ def data_factory(cfg: DictConfig):
     """
     Model-agnostic data factory.
     1. Loads 'cfg.dataset.name' dataset (requires src.datasets.{cfg.dataset.name}.load_data(cfg) to be defined)
+        Loaded data is expected to be features([n_samples, time_length, feature_size]), labels([n_samples])
+        Otherwise you need to define custom processor
     2. Selects tuning or experiment portion if cfg.dataset.tuning_holdout is True
     3. Processes the data in common_processor, or some custom processor if
         cfg.dataset.custom_processor is True and src.datasets.{cfg.dataset.name}.get_processor(data, cfg) is defined
