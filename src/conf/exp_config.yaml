@@ -16,3 +16,7 @@ model_cfg_path: null # required if single_HPs is True in exp mode. full path to 
 prefix: null
 wandb_silent: True
 wandb_offline: False
+
+hydra:  
+  run:  
+    dir: "/tmp/ppopov1/hydra"
