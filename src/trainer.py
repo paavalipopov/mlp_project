@@ -9,11 +9,14 @@ from pprint import pprint
 import torch
 from torch import nn, randperm as rp
 import numpy as np
+import pandas as pd
 
 from tqdm import tqdm
 from apto.utils.report import get_classification_report
 
 from omegaconf import OmegaConf, open_dict
+
+import wandb
 
 warnings.filterwarnings("ignore")
 
@@ -199,20 +202,29 @@ class BasicTrainer:
         """Start training"""
         start_time = time.time()
 
+        train_results = []
         for epoch in tqdm(range(self.epochs)):
+            # run train and valid dataloaders
             results = self.run_epoch("train")
             results.update(self.run_epoch("valid"))
 
-            self.logger.log(results)
+            # save results
+            train_results.append(results)
 
+            # update scheduler
             self.scheduler.step(results["valid_average_loss"])
 
+            # check early stopping criterion
             self.early_stopping(results["valid_average_loss"], self.model, epoch)
             if self.early_stopping.early_stop:
+                print("EarlyStopping triggered")
                 break
 
-        if self.early_stopping.early_stop:
-            print("EarlyStopping triggered")
+        # log train results
+        train_results = pd.DataFrame(train_results)
+        train_results.to_csv(f"{self.save_path}/train_log.csv", index_label="epoch")
+        table = wandb.Table(dataframe=train_results)
+        self.logger.log({"train_table": table})
 
         self.training_time = time.time() - start_time
         self.logger.summary["training_time"] = self.training_time
@@ -224,6 +236,10 @@ class BasicTrainer:
                 results = self.run_epoch(key)
 
                 self.test_results.update(results)
+
+        # log test results
+        test_results = pd.DataFrame(self.test_results, index=[0])
+        test_results.to_csv(f"{self.save_path}/test_log.csv", index=False)
 
         self.logger.log(self.test_results)
 
