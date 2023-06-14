@@ -217,13 +217,31 @@ class BasicTrainer:
             # check early stopping criterion
             self.early_stopping(results["valid_average_loss"], self.model, epoch)
             if self.early_stopping.early_stop:
-                print("EarlyStopping triggered")
                 break
+
+        if self.early_stopping.early_stop:
+            print("EarlyStopping triggered")
 
         # log train results
         train_results = pd.DataFrame(train_results)
-        train_results.to_csv(f"{self.save_path}/train_log.csv", index_label="epoch")
+        train_results['epoch'] = train_results.index
+        epoch = train_results.pop('epoch')
+        train_results.insert(0, 'epoch', epoch)
+        train_results.to_csv(f"{self.save_path}/train_log.csv", index=False)
+
         table = wandb.Table(dataframe=train_results)
+        self.logger.log(
+            {"train_average_loss" : wandb.plot.line(
+                table, "epoch", "train_average_loss",
+                title="train_average_loss")
+            }
+        )
+        self.logger.log(
+            {"valid_average_loss" : wandb.plot.line(
+                table, "epoch", "valid_average_loss",
+                title="valid_average_loss")
+            }
+        )
         self.logger.log({"train_table": table})
 
         self.training_time = time.time() - start_time
