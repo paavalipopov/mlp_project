@@ -30,7 +30,7 @@ def random_HPs(cfg: DictConfig):
         "dropout": uniform(0.1, 0.9),
         "hidden_size": randint(32, 256),
         "num_layers": randint(0, 4),
-        "lr": 10 ** uniform(-5, -3),
+        "lr": 10 ** uniform(-4, -3),
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
