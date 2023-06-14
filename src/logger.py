@@ -9,7 +9,7 @@ def logger_factory(cfg, model_cfg):
         project=cfg.project_name,
         name=cfg.wandb_trial_name,
         save_code=True,
-        dir="/tmp/ppopov1/wandb"
+        dir="~/.useless_logs/wandb",
     )
 
     # save tuning process wandb link
