@@ -1,12 +1,14 @@
 # pylint: disable=no-member, too-many-locals, too-many-arguments, too-many-instance-attributes, invalid-name, attribute-defined-outside-init, no-name-in-module
 """Training scripts"""
 from importlib import import_module
+import gc
 import os
 import time
 import warnings
 from pprint import pprint
 
 import torch
+from torch.utils.data import DataLoader
 from torch import nn, randperm as rp
 import numpy as np
 import pandas as pd
@@ -146,6 +148,45 @@ class BasicTrainer:
         return total_params
 
     def run_epoch(self, ds_name):
+        """Run single epoch and monitor OutOfMemoryError"""
+        impatience = 0
+        while True:
+            try:
+                metrics = self.run_epoch_for_real(ds_name)
+            except torch.cuda.CudaError as e:
+                if "out of memory" not in str(e):
+                    raise e
+                if impatience > 5:
+                    raise torch.cuda.OutOfMemoryError(
+                        "Can't fix CUDA out of memory exception"
+                    ) from e
+
+                impatience += 1
+                # run garbage collector and empty cache
+                gc.collect()
+                torch.cuda.empty_cache()
+
+                # reduce batch_size
+                with open_dict(self.cfg):
+                    self.cfg.mode.batch_size //= 2
+                for key in self.dataloaders:
+                    dataset = self.dataloaders[key].dataset
+                    self.dataloaders[key] = DataLoader(
+                        dataset,
+                        batch_size=self.cfg.mode.batch_size,
+                        num_workers=0,
+                        shuffle=key == "train",
+                    )
+
+                # try to run epoch again
+                continue
+
+            # no errors encountered, exiting loop
+            break
+
+        return metrics
+
+    def run_epoch_for_real(self, ds_name):
         """Run single epoch on `ds_name` dataloder"""
         is_train_dataset = ds_name == "train"
 
@@ -224,22 +265,24 @@ class BasicTrainer:
 
         # log train results
         train_results = pd.DataFrame(train_results)
-        train_results['epoch'] = train_results.index
-        epoch = train_results.pop('epoch')
-        train_results.insert(0, 'epoch', epoch)
+        train_results["epoch"] = train_results.index
+        epoch = train_results.pop("epoch")
+        train_results.insert(0, "epoch", epoch)
         train_results.to_csv(f"{self.save_path}/train_log.csv", index=False)
 
         table = wandb.Table(dataframe=train_results)
         self.logger.log(
-            {"train_average_loss" : wandb.plot.line(
-                table, "epoch", "train_average_loss",
-                title="train_average_loss")
+            {
+                "train_average_loss": wandb.plot.line(
+                    table, "epoch", "train_average_loss", title="train_average_loss"
+                )
             }
         )
         self.logger.log(
-            {"valid_average_loss" : wandb.plot.line(
-                table, "epoch", "valid_average_loss",
-                title="valid_average_loss")
+            {
+                "valid_average_loss": wandb.plot.line(
+                    table, "epoch", "valid_average_loss", title="valid_average_loss"
+                )
             }
         )
         self.logger.log({"train_table": table})
@@ -263,6 +306,7 @@ class BasicTrainer:
 
     def run(self):
         """Run training script"""
+
         print("Training model")
         self.train()
 
