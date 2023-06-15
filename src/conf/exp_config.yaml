@@ -19,4 +19,4 @@ wandb_offline: False
 
 hydra:  
   run:  
-    dir: "/tmp/ppopov1/hydra"
+    dir: "/tmp/ppopov1/.useless_logs/hydra"
