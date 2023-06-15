@@ -98,11 +98,13 @@ def tune(cfg, original_data, outer_k=None):
         df = pd.read_csv(f"{cfg.trial_dir}/CV_runs.csv")
         score = np.mean(df["test_score"].to_numpy())
         loss = np.mean(df["test_average_loss"].to_numpy())
+        time = np.mean(df["training_time"].to_numpy())
         df = pd.DataFrame(
             {
                 "trial": trial,
                 "score": score,
                 "loss": loss,
+                "time": time,
                 "path_to_config": f"{cfg.trial_dir}/model_config.yaml",
             },
             index=[0],
