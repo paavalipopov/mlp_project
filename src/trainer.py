@@ -160,6 +160,8 @@ class BasicTrainer:
                     ) from e
 
                 impatience += 1
+                print("CUDA OOM encountered, reducing batch_size and cleaning memory")
+
                 # run garbage collector and empty cache
                 gc.collect()
                 torch.cuda.empty_cache()
@@ -176,7 +178,7 @@ class BasicTrainer:
                         shuffle=key == "train",
                     )
 
-                # try to run epoch again
+                # try to run the epoch again
                 continue
 
             # no errors encountered, exiting loop
@@ -196,7 +198,7 @@ class BasicTrainer:
 
         with torch.set_grad_enabled(is_train_dataset):
             for data, target in self.dataloaders[ds_name]:
-                # permute TS data is needed
+                # permute TS data if needed
                 if is_train_dataset and self.permute:
                     for i, sample in enumerate(data):
                         data[i] = sample[rp(sample.shape[0]), :]
