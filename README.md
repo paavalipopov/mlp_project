@@ -15,59 +15,57 @@ pip install -r requirements.txt
 PYTHONPATH=. python scripts/run_experiments.py mode=tune dataset=fbirn model=mlp prefix=test wandb_offline=True
 PYTHONPATH=. python scripts/run_experiments.py mode=exp dataset=fbirn model=mlp prefix=test wandb_offline=True
 ```
-# TODO
-Update what's below
 
-# Examples
-## Training
-```
-PYTHONPATH=./ python scripts/run_experiments.py --mode tune --model mlp --ds fbirn --prefix test
-PYTHONPATH=./ python scripts/run_experiments.py --mode exp --model mlp --ds fbirn --prefix test
-```
-
-## Options for `scripts/run_experiments.py`
-
-### Required
-- `--mode`: 
+# 'scripts/run_experiments.py' options:
+## Required:
+- `mode`: 
     - `tune` - tune mode: run multiple experiments with different hyperparams
     - `exp` - experiment mode: run experiments with best hyperparams found in the `tune` mode
-    - `resume` - see below
-- `--model`: some of the working models; check the sourse code for more info
-    - `mlp`
-- `--ds`: dataset for the experiments
-    - `fbirn`
 
+- `model`: model for the experiment. Models' config files can be found at `src/conf/model`, and their sourse code is located at `src/models`
+    - `mlp` - our hero, TS model
+    - `lstm` - classic LSTM model for classification, TS model (not used in the paper)
+    - `mean_lstm` - `lstm` with LSTM output embeddings averaging, TS model
+    - `transformer` - BERT-inspired model, uses transformer endocder, TS model (not used in the paper)
+    - `mean_transformer` - `tansformer` with encoder output averaging, TS model
 
-### Optional
-- `--prefix`: custom prefix for the project
+    - `dice` - TS model, https://www.sciencedirect.com/science/article/pii/S1053811922008588?via%3Dihub
+    - `milc` - TS model, https://arxiv.org/abs/2007.16041 
+        - not implemented yet, the authors` training script was used with dataloaders replaced with our scripts
+
+    - `bnt` - FNC model, https://arxiv.org/abs/2210.06681
+    - `fbnetgen` - TS+FNC model, https://arxiv.org/abs/2205.12465
+    - `brainnetcnn` - FNC model, https://www.sciencedirect.com/science/article/pii/S1053811916305237
+    - `lr` - Logistic Regression, FNC model
+
+- `dataset`: dataset for the experiments. Datasets' config files can be found at `src/conf/dataset`, and their loading scripts are located at `src/datasets`.
+    - `fbirn` - ICA FBIRN dataset
+    - `cobre` - ICA COBRE dataset
+    - `bsnip` - ICA BSNIP dataset
+    - `abide` - ICA ABIDE dataset (not used in the paper)
+    - `abide_869` - ICA ABIDE extended dataset
+    - `oasis` - ICA OASIS dataset
+    - `adni` - ICA ADNI dataset
+    - `hcp` - ICA HCP dataset
+    - `ukb` - ICA UKB dataset with `sex` labels
+    - `ukb_age_bins` - ICA UKB dataset with `sex X age bins` labels
+    - `time_fbirn` - ICA FBIRN dataset, labeled according to time direction in the sample
+
+    - `fbirn_roi` - Schaefer 200 ROIs FBIRN dataset
+    - `abide_roi` - Schaefer 200 ROIs ABIDE dataset
+    - `hcp_roi` - Schaefer 200 ROIs HCP dataset
+
+    - `hcp_non_mni` - Deskian/Killiany ROIs HCP dataset (not used in the paper)
+
+## Optional
+- `prefix`: custom prefix for the project
     - default prefix is UTC time
     - appears in the name of logs directory and the name of WandB project
-    - `tune`->`exp` experiments will use the same prefix (unless it is default)
-    - don't use `-` character in the prefix
-    - don't use `resume` or `tune` as a prefix
-
-- `--multiclass`: some datasets have multiple classes (default: False); pass `--multiclass` if you want to load all classes
-
-- `--zscore`: whether dataset should be zscored over time direction (default: False); pass `--zscore` if you want zscore the data
-
-- `--filter-indices`: whehter ICA components in real-world fMRI data should be filtered (default: True); pass `--no-filter-indices` if you want to load all ICA components
-
-- `--max-epochs` - max epochs to use (default: 200)
-
-- `--n-splits` - number of splits for `StratifiedKFold` cross-validation (default=5):
-    - the `ds` dataset is split in `num-splits` equally sized folds
-
-- `--n-trials` - number of trials for each test fold (default=50 for `tune` and 10 for `exp`):
-    - in `tune` it equals to number of different hyperparams sets tested on each fold
-    - in `exp` mode, for each trial, a new seed for `train_test_split` is used for splitting train-val dataset into train and val datasets
-    - **important note**: if you provide the same `num-splits` and `num-trials` for different experiments on the same dataset, datasets splits will be the same
-
-- `--batch-size` - batch size (default: 64)
-- `--patience` - patience for early stopping (default: 30)
-
-### Required for `resume` mode
-- `--mode`: 
-    - `resume` - resume mode: for resuming interrupted experiment
-- `--path`:
-    - path to the interrupted experiment (e.g., `/Users/user/intro-dl-project/assets/logs/prefix-mode-model-ds`)
+    - `exp` mode runs with custom prefix will use HPs from `tune` mode runs with the same prefix
+- `use_additional_test_ds`: whether trained models whould be tested on compatible datasets (default: `False`)
+    - not implemented
+- `permute`: whether TS models should be trained on time-reshuffled data (default: `False`) 
+    - not used in the paper
+- `wandb_silent`: whether wandb logger should run silently (default: `True`)
+- `wandb_offline`: whether wandb logger should only log results locally (default: `False`)
 
