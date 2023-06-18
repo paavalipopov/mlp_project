@@ -153,9 +153,7 @@ class BasicTrainer:
         while True:
             try:
                 metrics = self.run_epoch_for_real(ds_name)
-            except torch.cuda.CudaError as e:
-                if "out of memory" not in str(e):
-                    raise e
+            except torch.cuda.OutOfMemoryError as e:
                 if impatience > 5:
                     raise torch.cuda.OutOfMemoryError(
                         "Can't fix CUDA out of memory exception"
