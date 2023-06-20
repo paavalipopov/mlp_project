@@ -8,3 +8,5 @@ captum
 matplotlib==3.6.3
 ipykernel
 hydra-core
+seaborn
+statannot
