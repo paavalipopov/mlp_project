@@ -90,7 +90,7 @@ def common_dataloader(cfg, original_data, k, trial=None):
     # shuffle training data time-wise
     if "permute" in cfg and cfg.permute == "Single":
         rng = default_rng(seed=42)
-        for i in split_data["train"]["TS"].shape[0]:
+        for i in range(split_data["train"]["TS"].shape[0]):
             # shuffle time points of each subject independently
             # axis=0 - time axis of a subject
             rng.shuffle(split_data["train"]["TS"][i], axis=0)

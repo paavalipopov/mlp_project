@@ -107,14 +107,14 @@ def get_best_config(cfg: DictConfig, k=None):
 
         searched_dir = cfg.project_name.split("-")
         if cfg.used_default_prefix:
-            searched_dir = "tune-" + "-".join(searched_dir[2:])
+            searched_dir = "tune-" + "-".join(searched_dir[2:4])
         else:
-            searched_dir = f"{cfg.prefix}-tune-" + "-".join(searched_dir[2:])
+            searched_dir = f"{cfg.prefix}-tune-" + "-".join(searched_dir[2:4])
 
         print(f"Searching trained model in '{LOGS_ROOT}/*{searched_dir}'")
         dirs = []
         for logdir in os.listdir(LOGS_ROOT):
-            if logdir.endswith(searched_dir):
+            if searched_dir in logdir:
                 dirs.append(os.path.join(LOGS_ROOT, logdir))
 
         assert (
