@@ -44,8 +44,9 @@ def set_project_name(cfg):
 
     if "single_HPs" in cfg and cfg.single_HPs:
         project_name += "-single_HPs"
-    if "permute" in cfg and cfg.permute:
-        project_name += "-permute"
+    if "permute" in cfg:
+        if cfg.permute != "None":
+            project_name += f"-perm_{cfg.permute}"
 
     project_dir = str(LOGS_ROOT.joinpath(project_name))
 
@@ -87,7 +88,7 @@ def set_run_name(cfg, outer_k=None, trial=None, inner_k=None):
             cfg.run_dir = run_dir
 
 
-def verify_config(cfg):
+def validate_config(cfg):
     """
     Verify the correctness of the provided config.
     Note: This list of checks is not exhaustive, additional checks happen further in the code.
@@ -104,8 +105,9 @@ def verify_config(cfg):
         ), "Provided path to model config ({cfg.model_cfg_path}) is incorrect"
 
     # shuffling the time points in the training samples is only allowed for TS input
-    if "permute" in cfg and cfg.permute:
-        if "data_type" in cfg.model:
+    if "permute" in cfg:
+        assert cfg.permute in ["None", "Single", "Multiple"]
+        if cfg.permute != "None" and "data_type" in cfg.model:
             assert (
                 cfg.model.data_type == "TS"
             ), "Time permutation is not allowed for non-TS models"

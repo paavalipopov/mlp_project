@@ -93,7 +93,10 @@ class BasicTrainer:
         self.scheduler = scheduler
         self.logger = logger
 
-        self.permute = cfg.permute if "permute" in cfg else False
+        if "permute" in cfg and cfg.permute == "Multiple":
+            self.permute = True
+        else:
+            self.permute = False
 
         params = self.count_params(self.model)
         self.logger.summary["params"] = params

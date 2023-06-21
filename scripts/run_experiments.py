@@ -9,7 +9,7 @@ import hydra
 import pandas as pd
 import numpy as np
 
-from src.utils import set_project_name, set_run_name, verify_config
+from src.utils import set_project_name, set_run_name, validate_config
 from src.data import data_factory, data_postfactory
 from src.dataloader import dataloader_factory, cross_validation_split
 from src.model import model_config_factory, model_factory
@@ -23,7 +23,7 @@ def start(cfg: DictConfig):
     """Main script for starting experiments"""
 
     # check if config is correct
-    verify_config(cfg)
+    validate_config(cfg)
 
     # set wandb environment
     os.environ["WANDB_SILENT"] = "true" if cfg.wandb_silent else "false"

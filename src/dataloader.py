@@ -1,6 +1,9 @@
 # pylint: disable=no-member, invalid-name, too-many-locals, too-many-arguments, consider-using-dict-items
 """ Scripts for creating dataloaders """
 from importlib import import_module
+from copy import deepcopy
+
+from numpy.random import default_rng
 
 from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 import torch
@@ -34,7 +37,7 @@ def dataloader_factory(cfg, data, k, trial=None):
     return dataloader
 
 
-def common_dataloader(cfg, data, k, trial=None):
+def common_dataloader(cfg, original_data, k, trial=None):
     """
     Return common dataloaders
     dataloaders are a dictionary of
@@ -58,6 +61,7 @@ def common_dataloader(cfg, data, k, trial=None):
 
     Output dataloaders return tuples with ("TS", "FNC", "labels"), ("TS", "labels"), or ("FNC", "labels") data order
     """
+    data = deepcopy(original_data)
     split_data = {"train": {}, "valid": {}, "test": {}}
 
     # train/test split
@@ -82,6 +86,14 @@ def common_dataloader(cfg, data, k, trial=None):
             split_data["train"][key][train_index],
             split_data["train"][key][val_index],
         )
+
+    # shuffle training data time-wise
+    if "permute" in cfg and cfg.permute == "Single":
+        rng = default_rng(seed=42)
+        for i in split_data["train"]["TS"].shape[0]:
+            # shuffle time points of each subject independently
+            # axis=0 - time axis of a subject
+            rng.shuffle(split_data["train"]["TS"][i], axis=0)
 
     # TODO: add support for extra test datasets
 
