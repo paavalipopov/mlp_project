@@ -2,13 +2,16 @@
 """Auxilary functions"""
 
 import os
+import glob
+import shutil
 
-from omegaconf import open_dict
+from omegaconf import open_dict, OmegaConf, DictConfig
+import pandas as pd
 
 from src.settings import UTCNOW, LOGS_ROOT
 
 
-def set_project_name(cfg):
+def set_project_name(cfg: DictConfig):
     """set project name and project dir based on config"""
 
     default_prefix = f"{UTCNOW}"
@@ -56,7 +59,7 @@ def set_project_name(cfg):
         cfg.used_default_prefix = used_default_prefix
 
 
-def set_run_name(cfg, outer_k=None, trial=None, inner_k=None):
+def set_run_name(cfg: DictConfig, outer_k=None, trial=None, inner_k=None):
     """set wandb run name and run directories"""
     if cfg.mode.name == "tune":
         if ("single_HP" in cfg and cfg.single_HP) or (
@@ -88,7 +91,7 @@ def set_run_name(cfg, outer_k=None, trial=None, inner_k=None):
             cfg.run_dir = run_dir
 
 
-def validate_config(cfg):
+def validate_config(cfg: DictConfig):
     """
     Verify the correctness of the provided config.
     Note: This list of checks is not exhaustive, additional checks happen further in the code.
@@ -127,3 +130,68 @@ def validate_config(cfg):
         ), "you must specify 'exp.tuning_split' if \
                  'exp.tuning_holdout' is set to True"
         assert isinstance(cfg.dataset.tuning_split, int)
+
+    # for resuming experiments you must be using a custom prefix
+    if "resume" in cfg and cfg.resume:
+        assert cfg.prefix is not None
+
+
+def get_resume_params(cfg: DictConfig) -> DictConfig:
+    """find resume point of an interrupted experiment"""
+
+    assert os.path.exists(
+        cfg.project_dir
+    ), f"No pre-existing project directory ({cfg.project_dir}) is found"
+
+    interrupted_cfg = OmegaConf.load(f"{cfg.project_dir}/general_config.yaml")
+    with open_dict(interrupted_cfg):
+        interrupted_cfg.resume = True
+
+    if cfg.mode.name == "tune":
+        if ("single_HP" in cfg and cfg.single_HP) or (
+            "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout
+        ):
+            starting_k = 0
+            search_dir = cfg.project_dir
+        else:
+            starting_k = max(len(glob.glob(f"{cfg.project_dir}/k_*")) - 1, 0)
+            search_dir = f"{cfg.project_dir}/k_{starting_k:02d}"
+
+        try:
+            df = pd.read_csv(f"{search_dir}/trial_runs.csv")
+            interrupted_trial = len(df)
+        except FileNotFoundError:
+            interrupted_trial = 0
+
+        interrupted_dir = f"{search_dir}/trial_{interrupted_trial:04d}"
+
+    elif cfg.mode.name == "exp":
+        starting_k = max(len(glob.glob(f"{cfg.project_dir}/k_*")) - 1, 0)
+        search_dir = f"{cfg.project_dir}/k_{starting_k:02d}"
+        try:
+            df = pd.read_csv(f"{search_dir}/fold_runs.csv")
+            interrupted_trial = len(df)
+        except FileNotFoundError:
+            interrupted_trial = 0
+
+        interrupted_dir = f"{search_dir}/trial_{interrupted_trial:04d}"
+
+    print(f"Deleting interrupted run logs in '{interrupted_dir}'")
+    try:
+        shutil.rmtree(interrupted_dir)
+    except FileNotFoundError:
+        print("Could not delete interrupted run logs - FileNotFoundError")
+
+    if interrupted_trial == interrupted_cfg.mode.n_trials:
+        interrupted_trial = 0
+        starting_k += 1
+    if starting_k == interrupted_cfg.mode.n_splits:
+        raise IndexError("The resumed experiment appears to be finished")
+
+    with open_dict(interrupted_cfg):
+        interrupted_cfg.resumed_params = {
+            "outer_k": starting_k,
+            "trial": interrupted_trial,
+        }
+
+    return interrupted_cfg
