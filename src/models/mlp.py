@@ -13,12 +13,11 @@ def get_model(cfg: DictConfig, model_cfg: DictConfig):
 
 
 def default_HPs(cfg: DictConfig):
-    # TODO: find decent default HPs
     model_cfg = {
-        "dropout": 0.8,
+        "dropout": 0.11,
         "hidden_size": 150,
-        "num_layers": 2,
-        "lr": 5e-4,
+        "num_layers": 0,
+        "lr": 0.00027,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }

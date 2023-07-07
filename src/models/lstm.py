@@ -12,6 +12,19 @@ def get_model(cfg: DictConfig, model_cfg: DictConfig):
     return LSTM(model_cfg)
 
 
+def default_HPs(cfg: DictConfig):
+    model_cfg = {
+        "dropout": 0.8,
+        "hidden_size": 210,
+        "num_layers": 1,
+        "bidirectional": True,
+        "lr": 4e-5,
+        "input_size": cfg.dataset.data_info.main.data_shape[2],
+        "output_size": cfg.dataset.data_info.main.n_classes,
+    }
+    return OmegaConf.create(model_cfg)
+
+
 def random_HPs(cfg: DictConfig):
     model_cfg = {
         "dropout": uniform(0.1, 0.9),

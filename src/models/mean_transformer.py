@@ -12,6 +12,20 @@ def get_model(cfg: DictConfig, model_cfg: DictConfig):
     return MeanTransformer(model_cfg)
 
 
+def default_HPs(cfg: DictConfig):
+    # TODO: find decent default HPs
+    model_cfg = {
+        "dropout": 0.36,
+        "head_hidden_size": 130,
+        "num_heads": 5,
+        "num_layers": 4,
+        "lr": 3e-5,
+        "input_size": cfg.dataset.data_info.main.data_shape[2],
+        "output_size": cfg.dataset.data_info.main.n_classes,
+    }
+    return OmegaConf.create(model_cfg)
+
+
 def random_HPs(cfg: DictConfig):
     model_cfg = {
         "dropout": uniform(0.1, 0.9),
