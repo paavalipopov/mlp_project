@@ -13,7 +13,6 @@ def get_model(cfg: DictConfig, model_cfg: DictConfig):
 
 
 def default_HPs(cfg: DictConfig):
-    # TODO: find decent default HPs
     model_cfg = {
         "dropout": 0.36,
         "head_hidden_size": 130,
