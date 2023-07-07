@@ -35,7 +35,7 @@ def start(cfg: DictConfig):
     if "resume" in cfg and cfg.resume:
         cfg = get_resume_params(cfg)
     else:
-        os.makedirs(cfg.project_dir, exist_ok=False)
+        os.makedirs(cfg.project_dir, exist_ok=True)
     with open(f"{cfg.project_dir}/general_config.yaml", "w", encoding="utf8") as f:
         OmegaConf.save(cfg, f)
 
