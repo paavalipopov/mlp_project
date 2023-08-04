@@ -2,6 +2,8 @@
 from omegaconf import open_dict
 import wandb
 
+from src.settings import ASSETS_ROOT
+
 
 def logger_factory(cfg, model_cfg):
     """Basic logger factory"""
@@ -9,7 +11,7 @@ def logger_factory(cfg, model_cfg):
         project=cfg.project_name,
         name=cfg.wandb_trial_name,
         save_code=True,
-        dir="~/.useless_logs/",
+        dir=f"{ASSETS_ROOT}/utility_logs"
     )
 
     # save tuning process wandb link

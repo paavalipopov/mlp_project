@@ -18,6 +18,6 @@ prefix: null
 wandb_silent: True
 wandb_offline: False
 
-hydra:  
-  run:  
-    dir: "~/.useless_logs/hydra"
+hydra:
+  run:
+    dir: ./assets/utility_logs
