@@ -11,31 +11,25 @@ from src.settings import DATA_ROOT
 def load_data(
     cfg: DictConfig,
     dataset_path: str = DATA_ROOT.joinpath(
-        "abide_roi/ABIDE1_AllData_871Subjects_region_shaefer200_316TP_onlytimeserieszscored.npz"
+        "abide_roi/data.npz"
     ),
-    labels_path: str = DATA_ROOT.joinpath("abide_roi/ABIDE1_region_labels_871.csv"),
 ):
     """
     Return ROI ABIDE data
 
     Input:
-    dataset_path: str = DATA_ROOT.joinpath("abide_roi/ABIDE1_AllData_871Subjects_region_shaefer200_316TP_onlytimeserieszscored.npz")
-    - path to the dataset
-    labels_path: str = DATA_ROOT.joinpath("abide_roi/ABIDE1_region_labels_871.csv")
-    - path to labels
+    dataset_path: str = DATA_ROOT.joinpath("abide_roi/data.npz")
+    - path to the dataset with labels
 
     Output:
     features, labels
     """
 
-    # get data
-    data = np.load(dataset_path)
+    with np.load(dataset_path) as npzfile:
+        data = npzfile["data"]
+        labels = npzfile["labels"]
     # print(data.shape)
-    # >>> (871, 200, 316)
-
-    labels = pd.read_csv(labels_path, header=None)
-    labels = labels.values.flatten().astype("int") - 1
-    # (871,)
+    # >>> (863, 200, 316)
 
     data = np.swapaxes(data, 1, 2)
     # data.shape = [n_samples, time_length, feature_size]
