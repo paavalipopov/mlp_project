@@ -13,7 +13,7 @@ def load_data(
     dataset_path: str = DATA_ROOT.joinpath("hcp_roi"),
 ):
     """
-    Return ROI HCP data
+    Return ROI HCP data with 752 subjects
 
     Input:
     dataset_path: str = DATA_ROOT.joinpath("hcp_roi")
