@@ -1,15 +1,16 @@
 # pylint: disable=invalid-name, missing-function-docstring, no-member
-""" MeanTransformer model module """
+""" Transformer model module """
 from random import uniform, randint
+import math
 
-import torch
 from torch import nn
+import torch
 
 from omegaconf import OmegaConf, DictConfig
 
 
 def get_model(cfg: DictConfig, model_cfg: DictConfig):
-    return MeanTransformer(model_cfg)
+    return PETransformer(model_cfg)
 
 
 def default_HPs(cfg: DictConfig):
@@ -38,9 +39,9 @@ def random_HPs(cfg: DictConfig):
     return OmegaConf.create(model_cfg)
 
 
-class MeanTransformer(nn.Module):
+class PETransformer(nn.Module):
     """
-    MeanTransformer model for fMRI data.
+    Transformer model for fMRI data.
     Expected input shape: [batch_size, time_length, input_feature_size].
     Output: [batch_size, n_classes]
 
@@ -73,6 +74,7 @@ class MeanTransformer(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         self.input_embed = nn.Linear(input_size, hidden_size)
+        self.pos_encoder = PositionalEncoding(hidden_size)
 
         self.fc = nn.Sequential(
             nn.Dropout(p=dropout), nn.Linear(hidden_size, output_size)
@@ -80,9 +82,37 @@ class MeanTransformer(nn.Module):
 
     def forward(self, x):
         input_embed = self.input_embed(x)
+        input_embed = self.pos_encoder(input_embed)
 
         tf_output = self.transformer(input_embed)
-        tf_output = torch.mean(tf_output, 1)
+        tf_output = tf_output[:, 0, :]
 
         fc_output = self.fc(tf_output)
         return fc_output
+
+
+class PositionalEncoding(nn.Module):
+    """Positional encoding module"""
+
+    def __init__(self, input_feature_size, max_seq_length=2048):
+        super().__init__()
+
+        # Create a matrix of shape (max_seq_length, input_feature_size)
+        pe = torch.zeros(max_seq_length, input_feature_size)
+
+        # Calculate the positional encoding
+        position = torch.arange(0, max_seq_length, dtype=torch.float32).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, input_feature_size, 2, dtype=torch.float32)
+            * -(math.log(10000.0) / input_feature_size)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(1).transpose(
+            0, 1
+        )  # Transpose for (batch_size, max_seq_length, d_model)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        # expects data of size [batch_size, time_length, input_feature_size]
+        return x + self.pe[:, : x.size(1), :]
