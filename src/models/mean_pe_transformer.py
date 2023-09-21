@@ -29,7 +29,7 @@ def default_HPs(cfg: DictConfig):
 def random_HPs(cfg: DictConfig):
     model_cfg = {
         "dropout": uniform(0.1, 0.9),
-        "head_hidden_size": randint(4, 128),
+        "head_hidden_size": 2 * randint(2, 64),
         "num_heads": randint(1, 5),
         "num_layers": randint(1, 5),
         "lr": 10 ** uniform(-5, -3),
