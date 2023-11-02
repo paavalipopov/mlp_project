@@ -14,15 +14,15 @@ def get_model(cfg: DictConfig, model_cfg: DictConfig):
 
 def default_HPs(cfg: DictConfig):
     model_cfg = {
-        "dropout": 0.11,
-        "hidden_size": 150,
+        "dropout": 0.38,
+        "hidden_size": 86,
         "num_layers": 0,
-        "lr": 0.00027,
+        "lr": 0.00093,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
     return OmegaConf.create(model_cfg)
-
+    
 
 def random_HPs(cfg: DictConfig):
     model_cfg = {
