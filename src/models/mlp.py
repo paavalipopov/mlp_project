@@ -101,11 +101,14 @@ class MLP(nn.Module):
 
         self.fc = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, introspection=False):
         bs, tl, fs = x.shape  # [batch_size, time_length, input_feature_size]
 
         fc_output = self.fc(x.view(-1, fs))
         fc_output = fc_output.view(bs, tl, -1)
+
+        if introspection:
+            return fc_output
 
         logits = fc_output.mean(1)
         return logits
