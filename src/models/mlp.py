@@ -107,8 +107,10 @@ class MLP(nn.Module):
         fc_output = self.fc(x.view(-1, fs))
         fc_output = fc_output.view(bs, tl, -1)
 
-        if introspection:
-            return fc_output
-
         logits = fc_output.mean(1)
+
+        if introspection:
+            predictions = torch.argmax(logits, axis=-1)
+            return fc_output, predictions
+
         return logits
