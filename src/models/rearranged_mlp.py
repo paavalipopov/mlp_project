@@ -16,7 +16,7 @@ def default_HPs(cfg: DictConfig):
     model_cfg = {
         "dropout": 0.11,
         "hidden_size": 150,
-        "num_layers": 0,
+        "num_layers": 1,
         "lr": 0.00027,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
@@ -74,7 +74,7 @@ class RearrangedMLP(nn.Module):
         # input block
         layers = [
             nn.Linear(input_size, hidden_size),
-            nn.LayerNorm(input_size),
+            nn.LayerNorm(hidden_size),
             nn.ReLU(),
             nn.Dropout(p=dropout),
         ]
@@ -84,8 +84,8 @@ class RearrangedMLP(nn.Module):
                 nn.Sequential(
                     ResidualBlock(
                         nn.Sequential(
-                            nn.Linear(input_size, hidden_size),
-                            nn.LayerNorm(input_size),
+                            nn.Linear(hidden_size, hidden_size),
+                            nn.LayerNorm(hidden_size),
                         )
                     ),
                     nn.ReLU(),
