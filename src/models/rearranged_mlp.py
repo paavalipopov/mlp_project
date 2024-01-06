@@ -14,10 +14,10 @@ def get_model(cfg: DictConfig, model_cfg: DictConfig):
 
 def default_HPs(cfg: DictConfig):
     model_cfg = {
-        "dropout": 0.11,
-        "hidden_size": 150,
-        "num_layers": 1,
-        "lr": 0.00027,
+        "dropout": 0.49,
+        "hidden_size": 160,
+        "num_layers": 0,
+        "lr": 0.005,
         "input_size": cfg.dataset.data_info.main.data_shape[2],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
