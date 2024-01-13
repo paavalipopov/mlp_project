@@ -310,7 +310,8 @@ def run_trial(cfg, model_cfg, dataloaders):
     weights_path = str(LOGS_ROOT.joinpath(weights_path))
     weights_path = f"{weights_path}/k_{cfg.k:02d}/trial_{cfg.trial:04d}/best_model.pt"
 
-    shutil.copyfile(weights_path, cfg.run_dir)
+    
+    shutil.copyfile(weights_path, f"{cfg.run_dir}/best_model.pt")
 
     with open_dict(cfg):
         cfg.mode.max_epochs = 0
