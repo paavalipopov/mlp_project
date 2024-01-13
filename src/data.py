@@ -32,22 +32,41 @@ def data_factory(cfg: DictConfig):
     }
     """
     # load dataset
-    try:
-        dataset_module = import_module(f"src.datasets.{cfg.dataset.name}")
-    except ModuleNotFoundError as e:
-        raise ModuleNotFoundError(
-            f"No module named '{cfg.dataset.name}' \
-                                  found in 'src.datasets'. Check if dataset name \
-                                  in config file and its module name are the same"
-        ) from e
+    dataset_names = [cfg.dataset.name]
+    if (
+        "compatible_datasets" in cfg.dataset
+        and cfg.dataset.compatible_datasets is not None
+    ):
+        if cfg.mode.name != "tune":
+            dataset_names += cfg.dataset.compatible_datasets
 
-    try:
-        ts_data, labels = dataset_module.load_data(cfg)
-    except AttributeError as e:
-        raise AttributeError(
-            f"'src.datasets.{cfg.dataset.name}' has no function\
-                             'load_data'. Is the function misnamed/not defined?"
-        ) from e
+    print(dataset_names)
+    raw_data = {}
+    for dataset_name in dataset_names:
+        print(f"Loading {dataset_name} dataset")
+        try:
+            dataset_module = import_module(f"src.datasets.{dataset_name}")
+        except ModuleNotFoundError as e:
+            raise ModuleNotFoundError(
+                f"No module named '{dataset_name}' \
+                                    found in 'src.datasets'. Check if dataset name \
+                                    in config file and its module name are the same"
+            ) from e
+
+        try:
+            ts_data, labels = dataset_module.load_data(cfg)
+        except AttributeError as e:
+            raise AttributeError(
+                f"'src.datasets.{dataset_name}' has no function\
+                                'load_data'. Is the function misnamed/not defined?"
+            ) from e
+
+        if dataset_name == cfg.dataset.name:
+            raw_data["main"] = (ts_data, labels)
+        else:
+            raw_data[dataset_name] = (ts_data, labels)
+
+        print(f"{dataset_name} dataset is loaded")
 
     # select tuning holdout (if needed)
     if "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout:
@@ -56,6 +75,8 @@ def data_factory(cfg: DictConfig):
         ), "you must specify 'exp.tuning_split' if \
                  'exp.tuning_holdout' is set to True"
         assert isinstance(cfg.dataset.tuning_split, int)
+
+        ts_data, labels = raw_data["main"]
 
         skf = StratifiedKFold(
             n_splits=cfg.dataset.tuning_split, shuffle=True, random_state=42
@@ -68,6 +89,8 @@ def data_factory(cfg: DictConfig):
         else:
             ts_data = ts_data[train_index]
             labels = labels[train_index]
+
+        raw_data["main"] = (ts_data, labels)
 
     # process data
     if "custom_processor" not in cfg.dataset or not cfg.dataset.custom_processor:
@@ -94,9 +117,8 @@ def data_factory(cfg: DictConfig):
 
     data = {}
     data_info = {}
-    data["main"], data_info["main"] = processor(cfg, (ts_data, labels))
-
-    # TODO: add additional test datasets
+    for dataset_name, (ts_data, labels) in raw_data.items():
+        data[dataset_name], data_info[dataset_name] = processor(cfg, (ts_data, labels))
 
     with open_dict(cfg):
         cfg.dataset.data_info = data_info

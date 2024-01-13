@@ -95,7 +95,10 @@ def common_dataloader(cfg, original_data, k, trial=None):
             # axis=0 - time axis of a subject
             rng.shuffle(split_data["train"]["TS"][i], axis=0)
 
-    # TODO: add support for extra test datasets
+    # add additional test datasets to split_data
+    for key in data:
+        if key != "main":
+            split_data[key] = data[key]
 
     # create dataloaders
     dataloaders = {}

@@ -36,8 +36,16 @@ def load_data(
         idx = indices[0].values - 1
         data = data[:, idx, :]
 
+    multiclass = False
+    if "multiclass" in cfg.dataset:
+        multiclass = cfg.dataset.multiclass
+
+    invert_classes = True
+    if "invert_classes" in cfg.dataset:
+        invert_classes = cfg.dataset.invert_classes
+
     filter_array = []
-    if cfg.dataset.multiclass:
+    if multiclass:
         unique, counts = np.unique(labels, return_counts=True)
         counts = dict(zip(unique, counts))
 
@@ -71,7 +79,7 @@ def load_data(
     data = data[filter_array, :, :]
     labels = labels[filter_array]
 
-    if not cfg.dataset.multiclass and cfg.dataset.invert_classes:
+    if not multiclass and invert_classes:
         new_labels = []
         for label in labels:
             if label == 0:
