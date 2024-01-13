@@ -306,7 +306,7 @@ def run_trial(cfg, model_cfg, dataloaders):
     scheduler = scheduler_factory(cfg, model_cfg, optimizer)
     logger = logger_factory(cfg, model_cfg)
 
-    weights_path = MATCHINGS[cfg.mode.name][cfg.dataset.name][0]
+    weights_path = MATCHINGS[cfg.model.name][cfg.dataset.name][0]
     weights_path = str(LOGS_ROOT.joinpath(weights_path))
     weights_path = f"{weights_path}/k_{cfg.k:02d}/trial_{cfg.trial:04d}/best_model.pt"
 
