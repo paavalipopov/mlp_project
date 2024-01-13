@@ -68,8 +68,11 @@ def get_dataloader(cfg: DictConfig, data, k, trial=None):
             split_data["train"][key][train_index],
             split_data["train"][key][val_index],
         )
-
-    # TODO: add support for extra test datasets
+        
+    # add additional test datasets to split_data
+    for key in data:
+        if key != "main":
+            split_data[key] = data[key]
 
     # split_data is a valid dataloader for LR model
 

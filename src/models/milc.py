@@ -83,7 +83,7 @@ def default_HPs(cfg: DictConfig):
 
 def data_postproc(cfg: DictConfig, model_cfg: DictConfig, original_data):
     # Apply sliding window technique to the data
-    data = deepcopy(original_data)
+    data = original_data
 
     feature_size = model_cfg.data_params.input_size
     window_size = model_cfg.data_params.window_size
