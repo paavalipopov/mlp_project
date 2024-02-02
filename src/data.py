@@ -40,7 +40,6 @@ def data_factory(cfg: DictConfig):
         if cfg.mode.name != "tune":
             dataset_names += cfg.dataset.compatible_datasets
 
-    print(dataset_names)
     raw_data = {}
     for dataset_name in dataset_names:
         print(f"Loading {dataset_name} dataset")
