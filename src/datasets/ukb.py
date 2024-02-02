@@ -10,6 +10,8 @@ def load_data(
     cfg: DictConfig,
     dataset_path: str = "/data/users2/ppopov1/datasets/ukb/UKB_sex_data.npz",
     indices_path: str = "/data/users2/ppopov1/datasets/ukb/correct_indices_GSP.csv",
+    tune_indices_path: str = "/data/users2/ppopov1/datasets/ukb/tune_indices.csv",
+    exp_indices_path: str = "/data/users2/ppopov1/datasets/ukb/exp_indices.csv",
 ):
     """
     Return UKB data
@@ -29,6 +31,15 @@ def load_data(
     with np.load(dataset_path) as npzfile:
         data = npzfile["features"]
         labels = npzfile["labels"]
+
+    if "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout:
+        if cfg.mode.name == "tune":
+            indices = pd.read_csv(tune_indices_path, header=None).to_numpy()
+        else:
+            indices = pd.read_csv(exp_indices_path, header=None).to_numpy()
+
+        data = data[indices]
+        labels = labels[indices]
 
     if cfg.dataset.filter_indices:
         # get correct indices/components

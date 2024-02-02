@@ -67,30 +67,6 @@ def data_factory(cfg: DictConfig):
 
         print(f"{dataset_name} dataset is loaded")
 
-    # select tuning holdout (if needed)
-    if "tuning_holdout" in cfg.dataset and cfg.dataset.tuning_holdout:
-        assert (
-            cfg.dataset.tuning_split is not None
-        ), "you must specify 'exp.tuning_split' if \
-                 'exp.tuning_holdout' is set to True"
-        assert isinstance(cfg.dataset.tuning_split, int)
-
-        ts_data, labels = raw_data["main"]
-
-        skf = StratifiedKFold(
-            n_splits=cfg.dataset.tuning_split, shuffle=True, random_state=42
-        )
-        CV_folds = list(skf.split(ts_data, labels))
-        train_index, test_index = CV_folds[0]
-        if cfg.mode.name == "tune":
-            ts_data = ts_data[test_index]
-            labels = labels[test_index]
-        else:
-            ts_data = ts_data[train_index]
-            labels = labels[train_index]
-
-        raw_data["main"] = (ts_data, labels)
-
     # process data
     if "custom_processor" not in cfg.dataset or not cfg.dataset.custom_processor:
         processor = common_processor
