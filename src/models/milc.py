@@ -56,20 +56,10 @@ def default_HPs(cfg: DictConfig):
     window_size = 20
     window_shift = 10
     # data params
-    _, time_length, feature_size = cfg.dataset.data_info.main.data_shape
     n_classes = cfg.dataset.data_info.main.n_classes
-    assert (
-        time_length >= window_size
-    ), f"Input time length {time_length} is smaller than the time window size {window_size}"
 
     model_cfg = {
-        "data_params": {
-            "input_size": feature_size,
-            "output_size": n_classes,
-            "window_size": window_size,
-            "window_shift": window_shift,
-            "n_windows": (time_length - window_size) // window_shift + 1,
-        },
+        "data_params": {},
         "lstm": {"input_feature_size": 256, "hidden_size": 200, "n_layers": 1},
         "optimizer": {
             "lr": 3e-4,
@@ -78,6 +68,20 @@ def default_HPs(cfg: DictConfig):
         "reg_param": 1e-3,
         "pretrained": True,
     }
+
+    for key in cfg.dataset.data_info:
+        _, time_length, feature_size = cfg.dataset.data_info[key]["data_shape"]
+        assert (
+            time_length >= window_size
+        ), f"Input time length {time_length} is smaller than the time window size {window_size}"
+
+        model_cfg["data_params"][key] = {
+            "input_size": feature_size,
+            "output_size": n_classes,
+            "window_size": window_size,
+            "window_shift": window_shift,
+            "n_windows": (time_length - window_size) // window_shift + 1,
+        }
     return OmegaConf.create(model_cfg)
 
 
@@ -85,13 +89,13 @@ def data_postproc(cfg: DictConfig, model_cfg: DictConfig, original_data):
     # Apply sliding window technique to the data
     data = original_data
 
-    feature_size = model_cfg.data_params.input_size
-    window_size = model_cfg.data_params.window_size
-    window_shift = model_cfg.data_params.window_shift
-    n_windows = model_cfg.data_params.n_windows
-
     new_data = {}
     for key in data:
+        feature_size = model_cfg.data_params[key]["input_size"]
+        window_size = model_cfg.data_params[key]["window_size"]
+        window_shift = model_cfg.data_params[key]["window_shift"]
+        n_windows = model_cfg.data_params[key]["n_windows"]
+
         ts_data = data[key]["TS"]
 
         # set data shape
@@ -179,7 +183,7 @@ class MILC(nn.Module):
         self.decoder = nn.Sequential(
             nn.Linear(model_cfg.lstm.hidden_size, model_cfg.lstm.hidden_size),
             nn.ReLU(),
-            nn.Linear(model_cfg.lstm.hidden_size, model_cfg.data_params.output_size),
+            nn.Linear(model_cfg.lstm.hidden_size, model_cfg.data_params.main.output_size),
         )
 
         self.init_weight()
@@ -235,9 +239,9 @@ class NatureOneCNN(nn.Module):
         super().__init__()
 
         # original feature size is treated as a number of channels of a 1D image
-        feature_size = model_cfg.data_params.input_size
+        feature_size = model_cfg.data_params.main.input_size
         # 1D image has size of the window time length
-        window_size = model_cfg.data_params.window_size
+        window_size = model_cfg.data_params.main.window_size
         # encoder output is passed to LSTM
         output_size = model_cfg.lstm.input_feature_size
 
