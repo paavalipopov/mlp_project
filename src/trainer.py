@@ -13,6 +13,8 @@ from torch import nn, randperm as rp
 import numpy as np
 import pandas as pd
 
+from captum.attr import Saliency
+
 from tqdm import tqdm
 from apto.utils.report import get_classification_report
 
@@ -150,12 +152,12 @@ class BasicTrainer:
             total_params = sum(p.numel() for p in model.parameters())
         return total_params
 
-    def run_epoch(self, ds_name):
+    def run_epoch(self, ds_name, inference=False):
         """Run single epoch and monitor OutOfMemoryError"""
         impatience = 0
         while True:
             try:
-                metrics = self.run_epoch_for_real(ds_name)
+                metrics = self.run_epoch_for_real(ds_name, inference=False)
             except torch.cuda.OutOfMemoryError as e:
                 if impatience > 5:
                     raise torch.cuda.OutOfMemoryError(
@@ -189,15 +191,18 @@ class BasicTrainer:
 
         return metrics
 
-    def run_epoch_for_real(self, ds_name):
+    def run_epoch_for_real(self, ds_name, inference=False):
         """Run single epoch on `ds_name` dataloder"""
-        is_train_dataset = ds_name == "train"
+        is_train_dataset = ds_name == "train" and not inference
 
         all_scores, all_targets = [], []
         total_loss, total_size = 0.0, 0
 
         self.model.train(is_train_dataset)
         start_time = time.time()
+
+        if inference:
+            grads = []
 
         with torch.set_grad_enabled(is_train_dataset):
             for data, target in self.dataloaders[ds_name]:
@@ -222,6 +227,11 @@ class BasicTrainer:
                     loss.backward()
                     self.optimizer.step()
 
+                if inference:
+                    saliency = Saliency(self.model)
+                    grads = saliency.attribute(data, target=target, abs=False)
+                    grads.append(grads.cpu().detach().numpy())
+
         average_time = (time.time() - start_time) / total_size
         average_loss = total_loss / total_size
 
@@ -239,6 +249,14 @@ class BasicTrainer:
             ds_name + "_average_loss": average_loss,
             ds_name + "_average_time": average_time,
         }
+
+        if inference:
+            grads = np.vstack(grads)
+            for class_label in np.unique(all_targets):
+                np.save(
+                    f"{self.save_path}/grads_{class_label}.npy",
+                    grads[all_targets == class_label],
+                )
 
         return metrics
 

@@ -8,8 +8,8 @@ default_HP: True # optional (default: False), True, False; default_HPs() is defi
 
 
 # require_data_postproc: False # optional (default: False), True, False; 
-custom_dataloader: True # optional (default: False), True, False; 
+# custom_dataloader: True # optional (default: False), True, False; 
 # custom_criterion: False # optional (default: False), True, False; 
-custom_optimizer: True # optional (default: False), True, False; 
+# custom_optimizer: True # optional (default: False), True, False; 
 # custom_scheduler: False # optional (default: False), True, False; 
-custom_trainer: True # optional (default: False), True, False; 
+# custom_trainer: True # optional (default: False), True, False; 
