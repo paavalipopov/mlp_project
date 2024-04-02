@@ -157,7 +157,7 @@ class BasicTrainer:
         impatience = 0
         while True:
             try:
-                metrics = self.run_epoch_for_real(ds_name, inference=False)
+                metrics = self.run_epoch_for_real(ds_name, inference)
             except torch.cuda.OutOfMemoryError as e:
                 if impatience > 5:
                     raise torch.cuda.OutOfMemoryError(
@@ -229,8 +229,8 @@ class BasicTrainer:
 
                 if inference:
                     saliency = Saliency(self.model)
-                    grads = saliency.attribute(data, target=target, abs=False)
-                    grads.append(grads.cpu().detach().numpy())
+                    grad = saliency.attribute(data, target=target, abs=False)
+                    grads.append(grad.cpu().detach().numpy())
 
         average_time = (time.time() - start_time) / total_size
         average_loss = total_loss / total_size
@@ -252,9 +252,9 @@ class BasicTrainer:
 
         if inference:
             grads = np.vstack(grads)
-            for class_label in np.unique(all_targets):
+            for class_label in range(self.cfg.dataset.data_info.main.n_classes):
                 np.save(
-                    f"{self.save_path}/grads_{class_label}.npy",
+                    f"{self.save_path}/{ds_name}_grads_{class_label}.npy",
                     grads[all_targets == class_label],
                 )
 
@@ -314,9 +314,9 @@ class BasicTrainer:
     def test(self):
         """Start testing"""
         for key in self.dataloaders:
-            if key not in ["train", "valid"]:
-                results = self.run_epoch(key)
+            results = self.run_epoch(key, inference=True)
 
+            if key not in ["train", "valid"]:
                 self.test_results.update(results)
 
         # log test results

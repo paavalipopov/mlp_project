@@ -8,12 +8,13 @@ from omegaconf import OmegaConf, DictConfig
 
 
 def get_model(cfg: DictConfig, model_cfg: DictConfig):
-    return LogisticRegression()
+    return LogisticRegression(model_cfg)
 
 
 def default_HPs(cfg: DictConfig):
     model_cfg = {
-        "input_size": cfg.dataset.data_info.main.data_shape[2],
+        "lr": 0.0001,
+        "input_size": cfg.dataset.data_info.main.data_shape[1],
         "output_size": cfg.dataset.data_info.main.n_classes,
     }
     return OmegaConf.create(model_cfg)
