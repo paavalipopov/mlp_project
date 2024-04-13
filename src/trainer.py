@@ -24,6 +24,8 @@ import wandb
 
 warnings.filterwarnings("ignore")
 
+from pdb import set_trace
+
 
 def trainer_factory(
     cfg, model_cfg, dataloaders, model, criterion, optimizer, scheduler, logger
@@ -255,7 +257,7 @@ class BasicTrainer:
             for class_label in range(self.cfg.dataset.data_info.main.n_classes):
                 np.save(
                     f"{self.save_path}/{ds_name}_grads_{class_label}.npy",
-                    grads[all_targets == class_label],
+                    grads[y_test == class_label],
                 )
 
         return metrics
